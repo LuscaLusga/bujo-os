@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BuJo OS</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0E1116">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BuJo OS">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#0E1116; --card:#171C24; --card2:#1F2630; --line:#2A3240;
+    --text:#E8ECF1; --dim:#8A94A3; --accent:#8B5CF6; --green:#10B981;
+    --red:#EF4444; --amber:#F59E0B; --radius:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-size:16px;}
+  body{padding-bottom:calc(76px + env(safe-area-inset-bottom));}
+  .hidden{display:none!important;}
+  h1{font-size:1.25rem; margin:0;}
+  h2{font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:22px 0 10px;}
+  button{font:inherit; color:inherit; border:0; background:none; cursor:pointer;}
+  input,textarea,select{font:inherit; color:var(--text); background:var(--card2);
+    border:1px solid var(--line); border-radius:10px; padding:12px; width:100%; outline:none;}
+  input:focus,textarea:focus{border-color:var(--accent);}
+
+  /* ---------- setup ---------- */
+  #setup{max-width:420px; margin:0 auto; padding:48px 20px;}
+  #setup .logo{font-size:2.2rem; margin-bottom:4px;}
+  #setup p{color:var(--dim); font-size:.9rem;}
+  #setup label{display:block; font-size:.8rem; color:var(--dim); margin:16px 0 6px;}
+  .btn-primary{display:block; width:100%; background:var(--accent); color:#fff;
+    padding:14px; border-radius:12px; font-weight:600; margin-top:22px;}
+  .btn-primary:disabled{opacity:.5;}
+  .setup-err{color:var(--red); font-size:.85rem; margin-top:12px; min-height:1.2em;}
+
+  /* ---------- header ---------- */
+  header{padding:calc(18px + env(safe-area-inset-top)) 20px 4px;}
+  header .date{color:var(--dim); font-size:.85rem;}
+  header .row{display:flex; align-items:center; justify-content:space-between;}
+  .streak{background:var(--card); border:1px solid var(--line); border-radius:999px;
+    padding:6px 12px; font-size:.85rem; white-space:nowrap;}
+  .badge{display:inline-block; background:var(--amber); color:#000; border-radius:999px;
+    font-size:.7rem; font-weight:700; padding:2px 8px; margin-left:8px; vertical-align:middle;}
+
+  main{padding:0 16px;}
+
+  /* ---------- calendar ---------- */
+  .timeline{display:flex; flex-direction:column; gap:2px;}
+  .event{display:flex; gap:12px; background:var(--card); border-radius:12px; padding:10px 14px; align-items:baseline;}
+  .event .time{color:var(--accent); font-variant-numeric:tabular-nums; font-size:.85rem; min-width:76px;}
+  .event .title{font-size:.95rem;}
+  .empty{color:var(--dim); font-size:.9rem; padding:8px 2px;}
+
+  /* ---------- KPI cards ---------- */
+  .kpis{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .kpi{background:var(--card); border-radius:var(--radius); padding:14px;
+    display:flex; align-items:center; gap:12px; text-align:left; border:1px solid transparent;}
+  .kpi:active{border-color:var(--accent);}
+  .kpi .ring{position:relative; width:56px; height:56px; flex:none;}
+  .kpi .ring svg{transform:rotate(-90deg);}
+  .kpi .ring .val{position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; font-size:.8rem; font-weight:700; font-variant-numeric:tabular-nums;}
+  .kpi .meta .name{font-size:.85rem; font-weight:600; line-height:1.2;}
+  .kpi .meta .sub{font-size:.72rem; color:var(--dim); margin-top:3px;}
+
+  /* ---------- note ---------- */
+  .notewrap{background:var(--card); border-radius:var(--radius); padding:14px;}
+  .notewrap textarea{background:transparent; border:0; padding:0; resize:none; min-height:56px;}
+  .notewrap .actions{display:flex; justify-content:flex-end;}
+  .btn-small{background:var(--card2); border:1px solid var(--line); border-radius:10px;
+    padding:8px 16px; font-size:.85rem; font-weight:600;}
+  .btn-small.saved{color:var(--green); border-color:var(--green);}
+
+  /* ---------- FAB ---------- */
+  #fab{position:fixed; right:18px; bottom:calc(88px + env(safe-area-inset-bottom));
+    width:58px; height:58px; border-radius:50%; background:var(--accent); color:#fff;
+    font-size:2rem; line-height:0; box-shadow:0 6px 20px rgba(139,92,246,.45); z-index:40;}
+
+  /* ---------- tabs ---------- */
+  nav{position:fixed; left:0; right:0; bottom:0; display:flex; background:rgba(14,17,22,.92);
+    backdrop-filter:blur(12px); border-top:1px solid var(--line);
+    padding-bottom:env(safe-area-inset-bottom); z-index:50;}
+  nav button{flex:1; padding:10px 0 12px; color:var(--dim); font-size:.7rem; display:flex;
+    flex-direction:column; align-items:center; gap:3px;}
+  nav button.active{color:var(--accent);}
+  nav .ico{font-size:1.25rem; line-height:1;}
+
+  /* ---------- modals ---------- */
+  .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:60;
+    display:flex; align-items:flex-end;}
+  .sheet{background:var(--card); width:100%; border-radius:20px 20px 0 0; padding:20px 20px
+    calc(24px + env(safe-area-inset-bottom)); animation:up .18s ease-out;}
+  @keyframes up{from{transform:translateY(40px); opacity:.6;} to{transform:none; opacity:1;}}
+  .sheet h3{margin:0 0 4px; font-size:1.05rem;}
+  .sheet .sub{color:var(--dim); font-size:.8rem; margin-bottom:16px;}
+  .stepper{display:flex; align-items:center; gap:14px; justify-content:center; margin:18px 0;}
+  .stepper button{width:56px; height:56px; border-radius:50%; background:var(--card2);
+    border:1px solid var(--line); font-size:1.6rem;}
+  .stepper input{width:110px; text-align:center; font-size:1.6rem; font-weight:700; padding:8px;}
+  .seg{display:flex; background:var(--card2); border-radius:12px; padding:4px; margin:8px 0 14px;}
+  .seg button{flex:1; padding:10px; border-radius:9px; font-weight:600; color:var(--dim); font-size:.9rem;}
+  .seg button.on{background:var(--accent); color:#fff;}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px;}
+  .chips button{background:var(--card2); border:1px solid var(--line); border-radius:999px;
+    padding:8px 13px; font-size:.82rem; color:var(--dim);}
+  .chips button.on{border-color:var(--accent); color:var(--text); background:rgba(139,92,246,.15);}
+  .sheet label{display:block; font-size:.78rem; color:var(--dim); margin:10px 0 6px;}
+  .sheet .row2{display:flex; gap:10px; margin-top:18px;}
+  .btn-ghost{flex:1; padding:13px; border-radius:12px; background:var(--card2);
+    border:1px solid var(--line); font-weight:600;}
+  .btn-go{flex:2; padding:13px; border-radius:12px; background:var(--accent); color:#fff; font-weight:700;}
+  .btn-go:disabled{opacity:.4;}
+
+  /* ---------- toast / stubs / settings ---------- */
+  #toast{position:fixed; left:50%; transform:translateX(-50%);
+    bottom:calc(100px + env(safe-area-inset-bottom)); background:var(--card2);
+    border:1px solid var(--line); border-radius:12px; padding:10px 18px; font-size:.85rem;
+    z-index:70; transition:opacity .3s; opacity:0; pointer-events:none; max-width:88vw; text-align:center;}
+  #toast.show{opacity:1;}
+  .stub{padding:60px 24px; text-align:center; color:var(--dim);}
+  .stub .big{font-size:2.4rem; margin-bottom:10px;}
+  .set-card{background:var(--card); border-radius:var(--radius); padding:16px; margin-bottom:14px;}
+  .set-card label{display:block; font-size:.78rem; color:var(--dim); margin:10px 0 6px;}
+  .mono{font-family:ui-monospace,Menlo,monospace; font-size:.8rem; word-break:break-all; color:var(--dim);}
+</style>
+</head>
+<body>
+
+<!-- ============ FIRST-RUN SETUP ============ -->
+<div id="setup" class="hidden">
+  <div class="logo">◐ BuJo OS</div>
+  <p>Connect the app to your Apps Script API. You only do this once — both values stay on this device (localStorage).</p>
+  <label>API URL (ends in /exec)</label>
+  <input id="su-url" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+  <label>Token</label>
+  <input id="su-token" type="password" placeholder="your secret token" autocomplete="off">
+  <button class="btn-primary" id="su-go">Connect</button>
+  <div class="setup-err" id="su-err"></div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hidden">
+  <header>
+    <div class="date" id="h-date"></div>
+    <div class="row">
+      <h1 id="h-greet"></h1>
+      <div class="streak" id="h-streak"></div>
+    </div>
+  </header>
+
+  <main>
+    <!-- TODAY -->
+    <section id="view-today">
+      <h2>Today’s schedule</h2>
+      <div class="timeline" id="cal"></div>
+
+      <h2>KPIs <span id="queue-badge" class="badge hidden"></span></h2>
+      <div class="kpis" id="kpis"></div>
+
+      <h2>Note of the day</h2>
+      <div class="notewrap">
+        <textarea id="note" placeholder="One thought or highlight worth keeping…"></textarea>
+        <div class="actions"><button class="btn-small" id="note-save">Save note</button></div>
+      </div>
+    </section>
+
+    <!-- STUBS -->
+    <section id="view-trends" class="hidden"><div class="stub"><div class="big">📈</div>Trends arrive in Session 3.</div></section>
+    <section id="view-finance" class="hidden"><div class="stub"><div class="big">💰</div>Finance arrives in Session 4.</div></section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="hidden">
+      <h2>Connection</h2>
+      <div class="set-card">
+        <label>API URL</label><input id="st-url" type="url">
+        <label>Token</label><input id="st-token" type="password" placeholder="unchanged">
+        <button class="btn-primary" id="st-save">Save & reconnect</button>
+      </div>
+      <h2>Data</h2>
+      <div class="set-card">
+        <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
+        <div class="mono" id="st-info" style="margin-top:10px;"></div>
+      </div>
+      <div class="stub" style="padding:24px;">Objectives editor arrives in Session 3.</div>
+    </section>
+  </main>
+
+  <button id="fab" title="Log a spend">+</button>
+
+  <nav>
+    <button data-view="today" class="active"><span class="ico">☀️</span>Today</button>
+    <button data-view="trends"><span class="ico">📈</span>Trends</button>
+    <button data-view="finance"><span class="ico">💰</span>Finance</button>
+    <button data-view="settings"><span class="ico">⚙️</span>Settings</button>
+  </nav>
+</div>
+
+<!-- ============ KPI MODAL ============ -->
+<div class="overlay hidden" id="kpi-modal">
+  <div class="sheet">
+    <h3 id="km-name"></h3>
+    <div class="sub" id="km-sub"></div>
+    <div class="stepper">
+      <button id="km-minus">−</button>
+      <input id="km-value" type="number" inputmode="decimal" step="any" min="0">
+      <button id="km-plus">＋</button>
+    </div>
+    <div class="row2">
+      <button class="btn-ghost" data-close>Cancel</button>
+      <button class="btn-go" id="km-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SPEND MODAL ============ -->
+<div class="overlay hidden" id="spend-modal">
+  <div class="sheet">
+    <h3>Quick spend</h3>
+    <div class="sub">Lands in Transactions as source=manual.</div>
+    <label>Amount (R$)</label>
+    <input id="sp-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00">
+    <div class="seg" id="sp-method">
+      <button data-m="pix" class="on">PIX</button>
+      <button data-m="credit">Credit card</button>
+    </div>
+    <label>Category</label>
+    <div class="chips" id="sp-cats"></div>
+    <label>Description (optional)</label>
+    <input id="sp-desc" type="text" placeholder="e.g. bakery">
+    <div class="row2">
+      <button class="btn-ghost" data-close>Cancel</button>
+      <button class="btn-go" id="sp-save">Save spend</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* ================= constants / storage ================= */
+const DISCRETIONARY = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Transportation','Other'];
+const LS = { url:'bujo_api_url', token:'bujo_token', queue:'bujo_queue', cache:'bujo_cache', spend:'bujo_manual_spend' };
+const $ = s => document.querySelector(s);
+const money = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+let payload = null;               // last API payload
+let currentKpi = null;            // objective open in the KPI modal
+let spendMethod = 'pix', spendCat = null;
+
+const todayISO = () => {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+};
+
+/* ================= API ================= */
+const cfg = () => ({ url: localStorage.getItem(LS.url), token: localStorage.getItem(LS.token) });
+
+async function apiGet(url, token) {
+  const res = await fetch(url + '?token=' + encodeURIComponent(token));
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'API error');
+  return j;
+}
+
+/* POST as text/plain (string body) — avoids the CORS preflight Apps Script can't answer */
+async function apiPost(action, data) {
+  const { url, token } = cfg();
+  try {
+    const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action, payload: data }) });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'API error');
+    return true;
+  } catch (e) {
+    pushQueue({ action, payload: data });
+    toast('Offline — saved to queue ✓');
+    return false;
+  }
+}
+
+/* ================= offline queue ================= */
+const getQueue = () => JSON.parse(localStorage.getItem(LS.queue) || '[]');
+const setQueue = q => { localStorage.setItem(LS.queue, JSON.stringify(q)); renderQueueBadge(); };
+const pushQueue = item => { const q = getQueue(); q.push(item); setQueue(q); };
+
+async function flushQueue() {
+  let q = getQueue();
+  if (!q.length) return;
+  const { url, token } = cfg();
+  const remaining = [];
+  for (const item of q) {
+    try {
+      const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action:item.action, payload:item.payload }) });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error);
+    } catch (e) { remaining.push(item); }
+  }
+  setQueue(remaining);
+  if (q.length && !remaining.length) toast('Queue synced ✓');
+}
+
+function renderQueueBadge() {
+  const n = getQueue().length, b = $('#queue-badge');
+  b.classList.toggle('hidden', !n);
+  b.textContent = n + ' queued';
+}
+
+/* ================= state helpers ================= */
+const kpiRows = () => (payload && payload.kpi_log) || [];
+
+function todaysValue(kpi_id) {
+  const r = kpiRows().find(r => String(r.date) === todayISO() && r.kpi_id === kpi_id);
+  return r ? Number(r.value) || 0 : null;
+}
+
+/* manual spends added today from this device (Session 4 replaces this with derived varspend) */
+function manualSpendToday() {
+  const s = JSON.parse(localStorage.getItem(LS.spend) || '{}');
+  return s.date === todayISO() ? Number(s.total) || 0 : 0;
+}
+function addManualSpend(v) {
+  localStorage.setItem(LS.spend, JSON.stringify({ date: todayISO(), total: manualSpendToday() + v }));
+}
+
+function upsertLocalKpi(kpi_id, value, note) {
+  const rows = kpiRows();
+  const r = rows.find(r => String(r.date) === todayISO() && r.kpi_id === kpi_id);
+  if (r) { r.value = value; if (note !== undefined) r.note = note; }
+  else rows.push({ date: todayISO(), kpi_id, value, note: note || '' });
+  localStorage.setItem(LS.cache, JSON.stringify(payload));
+}
+
+function streak() {
+  const days = new Set(kpiRows().filter(r => r.kpi_id !== 'note').map(r => String(r.date)));
+  let n = 0;
+  const d = new Date();
+  if (!days.has(todayISO())) d.setDate(d.getDate() - 1);   // today not logged yet ≠ broken
+  for (;;) {
+    const iso = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    if (!days.has(iso)) break;
+    n++; d.setDate(d.getDate() - 1);
+  }
+  return n;
+}
+
+/* ================= render ================= */
+function render() {
+  const now = new Date();
+  $('#h-date').textContent = now.toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  const h = now.getHours();
+  $('#h-greet').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + ', Lucas';
+  const s = streak();
+  $('#h-streak').textContent = '🔥 ' + s + (s === 1 ? ' day' : ' days');
+
+  renderCalendar(); renderKpis(); renderNote(); renderQueueBadge();
+  $('#st-info').textContent = payload ? ('Last sync: ' + (payload.generated_at || '—')) : 'No data yet';
+}
+
+function renderCalendar() {
+  const box = $('#cal'); box.innerHTML = '';
+  const evs = ((payload && payload.calendar) || [])
+    .filter(e => e.date === todayISO())
+    .sort((a,b) => (a.all_day ? '' : a.start).localeCompare(b.all_day ? '' : b.start));
+  if (!evs.length) { box.innerHTML = '<div class="empty">No events today.</div>'; return; }
+  for (const e of evs) {
+    const t = e.all_day ? 'All day' : e.start.slice(11,16) + '–' + e.end.slice(11,16);
+    const div = document.createElement('div');
+    div.className = 'event';
+    div.innerHTML = '<span class="time"></span><span class="title"></span>';
+    div.querySelector('.time').textContent = t;
+    div.querySelector('.title').textContent = e.title;
+    box.appendChild(div);
+  }
+}
+
+function ringSVG(pct, color, over) {
+  const R = 24, C = 2 * Math.PI * R;
+  const dash = pct === null ? 0 : Math.min(Math.max(pct,0),1) * C;
+  const stroke = over ? 'var(--red)' : color;
+  return '<svg width="56" height="56" viewBox="0 0 56 56">' +
+    '<circle cx="28" cy="28" r="'+R+'" fill="none" stroke="var(--line)" stroke-width="5"'+(pct===null?' stroke-dasharray="3 5"':'')+'/>' +
+    (pct === null ? '' :
+    '<circle cx="28" cy="28" r="'+R+'" fill="none" stroke="'+stroke+'" stroke-width="5" stroke-linecap="round" stroke-dasharray="'+dash+' '+C+'"/>') +
+    '</svg>';
+}
+
+function renderKpis() {
+  const box = $('#kpis'); box.innerHTML = '';
+  for (const o of ((payload && payload.objectives) || [])) {
+    const isVar = o.kpi_id === 'varspend';
+    let val = todaysValue(o.kpi_id);
+    if (isVar) val = (val || 0) + manualSpendToday();
+    const logged = val !== null;
+    const target = Number(o.daily_target) || 0;
+    let pct = null, over = false;
+    if (target > 0) {
+      pct = (val || 0) / target;
+      over = o.direction === 'lower' ? (val || 0) > target : false;
+      pct = Math.min(pct, 1);
+    }
+    const shown = !logged ? '—' : (isVar ? Math.round(val) : (Number.isInteger(val) ? val : val.toFixed(1)));
+    const sub = target > 0 ? ('target ' + (isVar ? money(target) : target + ' ' + o.unit))
+                           : 'no target yet · ' + o.unit;
+    const card = document.createElement('button');
+    card.className = 'kpi';
+    card.innerHTML =
+      '<div class="ring">' + ringSVG(logged ? pct : null, o.color || 'var(--accent)', over) +
+      '<div class="val" style="color:' + (over ? 'var(--red)' : (o.color || 'var(--text)')) + '"></div></div>' +
+      '<div class="meta"><div class="name"></div><div class="sub"></div></div>';
+    card.querySelector('.val').textContent = shown;
+    card.querySelector('.name').textContent = o.name;
+    card.querySelector('.sub').textContent = sub + (isVar && manualSpendToday() ? ' · incl. quick spends' : '');
+    card.addEventListener('click', () => openKpiModal(o));
+    box.appendChild(card);
+  }
+}
+
+function renderNote() {
+  const r = kpiRows().find(r => String(r.date) === todayISO() && r.kpi_id === 'note');
+  if (r && !$('#note').value) $('#note').value = r.note || '';
+}
+
+/* ================= KPI modal ================= */
+function openKpiModal(o) {
+  currentKpi = o;
+  $('#km-name').textContent = o.name;
+  $('#km-sub').textContent = o.unit + (Number(o.daily_target) ? ' · daily target ' + o.daily_target : '');
+  const v = todaysValue(o.kpi_id);
+  $('#km-value').value = v === null ? 0 : v;
+  $('#kpi-modal').classList.remove('hidden');
+}
+const kpiStep = () => currentKpi && currentKpi.unit === 'hours' ? 0.5 : 1;
+$('#km-minus').addEventListener('click', () => { const i = $('#km-value'); i.value = Math.max(0, (Number(i.value)||0) - kpiStep()); });
+$('#km-plus').addEventListener('click', () => { const i = $('#km-value'); i.value = (Number(i.value)||0) + kpiStep(); });
+$('#km-save').addEventListener('click', async () => {
+  const value = Number($('#km-value').value) || 0;
+  $('#kpi-modal').classList.add('hidden');
+  upsertLocalKpi(currentKpi.kpi_id, value);
+  render();
+  if (await apiPost('log_kpi', { date: todayISO(), kpi_id: currentKpi.kpi_id, value })) toast(currentKpi.name + ' saved ✓');
+});
+
+/* ================= spend modal ================= */
+function openSpend() {
+  $('#sp-amount').value = ''; $('#sp-desc').value = '';
+  spendCat = null;
+  document.querySelectorAll('#sp-cats button').forEach(b => b.classList.remove('on'));
+  $('#spend-modal').classList.remove('hidden');
+  setTimeout(() => $('#sp-amount').focus(), 150);
+}
+$('#fab').addEventListener('click', openSpend);
+
+const catBox = $('#sp-cats');
+for (const c of DISCRETIONARY) {
+  const b = document.createElement('button');
+  b.textContent = c;
+  b.addEventListener('click', () => {
+    spendCat = c;
+    catBox.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  });
+  catBox.appendChild(b);
+}
+$('#sp-method').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  spendMethod = b.dataset.m;
+  document.querySelectorAll('#sp-method button').forEach(x => x.classList.toggle('on', x === b));
+});
+$('#sp-save').addEventListener('click', async () => {
+  const amt = Math.abs(Number($('#sp-amount').value) || 0);
+  if (!amt) { toast('Enter an amount'); return; }
+  if (!spendCat) { toast('Pick a category'); return; }
+  $('#spend-modal').classList.add('hidden');
+  addManualSpend(amt);
+  render();
+  const ok = await apiPost('add_transaction', {
+    date: todayISO(),
+    description: $('#sp-desc').value.trim(),
+    amount: -amt,
+    category: spendCat,
+    source: 'manual',
+    method: spendMethod
+  });
+  if (ok) toast(money(amt) + ' · ' + spendCat + ' ✓');
+});
+
+/* ================= note ================= */
+$('#note-save').addEventListener('click', async () => {
+  const text = $('#note').value.trim();
+  upsertLocalKpi('note', '', text);
+  const btn = $('#note-save');
+  if (await apiPost('log_kpi', { date: todayISO(), kpi_id: 'note', value: '', note: text })) {
+    btn.textContent = 'Saved ✓'; btn.classList.add('saved');
+    setTimeout(() => { btn.textContent = 'Save note'; btn.classList.remove('saved'); }, 2000);
+  }
+});
+
+/* ================= modals / tabs / toast ================= */
+document.querySelectorAll('[data-close]').forEach(b =>
+  b.addEventListener('click', () => b.closest('.overlay').classList.add('hidden')));
+document.querySelectorAll('.overlay').forEach(o =>
+  o.addEventListener('click', e => { if (e.target === o) o.classList.add('hidden'); }));
+
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
+  ['today','trends','finance','settings'].forEach(v =>
+    $('#view-' + v).classList.toggle('hidden', v !== b.dataset.view));
+  $('#fab').classList.toggle('hidden', b.dataset.view !== 'today');
+}));
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ================= settings ================= */
+$('#st-save').addEventListener('click', async () => {
+  const url = $('#st-url').value.trim() || cfg().url;
+  const token = $('#st-token').value.trim() || cfg().token;
+  try {
+    payload = await apiGet(url, token);
+    localStorage.setItem(LS.url, url); localStorage.setItem(LS.token, token);
+    localStorage.setItem(LS.cache, JSON.stringify(payload));
+    toast('Connected ✓'); render();
+  } catch (e) { toast('Failed: ' + e.message); }
+});
+$('#st-refresh').addEventListener('click', () => refresh(true));
+
+/* ================= boot ================= */
+async function refresh(showToast) {
+  const { url, token } = cfg();
+  try {
+    payload = await apiGet(url, token);
+    localStorage.setItem(LS.cache, JSON.stringify(payload));
+    if (showToast) toast('Refreshed ✓');
+  } catch (e) {
+    if (showToast) toast('Offline — showing cached data');
+  }
+  render();
+}
+
+$('#su-go').addEventListener('click', async () => {
+  const url = $('#su-url').value.trim(), token = $('#su-token').value.trim();
+  const err = $('#su-err'); err.textContent = '';
+  if (!url.endsWith('/exec')) { err.textContent = 'URL should end in /exec'; return; }
+  $('#su-go').disabled = true;
+  try {
+    payload = await apiGet(url, token);
+    localStorage.setItem(LS.url, url); localStorage.setItem(LS.token, token);
+    localStorage.setItem(LS.cache, JSON.stringify(payload));
+    $('#setup').classList.add('hidden'); $('#app').classList.remove('hidden');
+    render();
+  } catch (e) { err.textContent = 'Could not connect: ' + e.message; }
+  $('#su-go').disabled = false;
+});
+
+window.addEventListener('online', flushQueue);
+
+(function boot() {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  const { url, token } = cfg();
+  if (!url || !token) { $('#setup').classList.remove('hidden'); return; }
+  $('#app').classList.remove('hidden');
+  $('#st-url').value = url;
+  const cached = localStorage.getItem(LS.cache);
+  if (cached) { payload = JSON.parse(cached); render(); }
+  flushQueue().then(() => refresh(false));
+})();
+</script>
+</body>
+</html>
