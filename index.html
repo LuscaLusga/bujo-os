@@ -307,6 +307,10 @@
       <button data-m="pix" class="on">PIX</button>
       <button data-m="credit">Credit card</button>
     </div>
+    <div id="sp-inst-wrap" class="hidden">
+      <label>Installments (amount above = total price)</label>
+      <select id="sp-inst"></select>
+    </div>
     <label>Category</label>
     <div class="chips" id="sp-cats"></div>
     <label>Description (optional)</label>
@@ -1002,9 +1006,31 @@ $('#km-save').addEventListener('click', async () => {
 });
 
 /* ================= spend modal ================= */
+/* installments: split total (in cents) into n parcelas — first absorbs rounding */
+function splitParcelas(totalCents, n) {
+  const base = Math.floor(totalCents / n), first = totalCents - base * (n - 1);
+  return Array.from({ length: n }, (_, k) => k === 0 ? first : base);
+}
+/* parcela dates: fatura closing day (26th); after the 26th → next cycle */
+function parcelaDates(n) {
+  const t = new Date();
+  const m0 = t.getMonth() + (t.getDate() > 26 ? 1 : 0);
+  return Array.from({ length: n }, (_, k) => isoOf(new Date(t.getFullYear(), m0 + k, 26)));
+}
+const instSel = $('#sp-inst');
+for (let i = 1; i <= 12; i++) {
+  const o = document.createElement('option');
+  o.value = i; o.textContent = i === 1 ? '1x (à vista)' : i + 'x';
+  instSel.appendChild(o);
+}
+function syncInstVisibility() {
+  $('#sp-inst-wrap').classList.toggle('hidden', spendMethod !== 'credit');
+}
 function openSpend() {
   $('#sp-amount').value = ''; $('#sp-desc').value = '';
   spendCat = null;
+  instSel.value = '1';
+  syncInstVisibility();
   document.querySelectorAll('#sp-cats button').forEach(b => b.classList.remove('on'));
   $('#spend-modal').classList.remove('hidden');
   setTimeout(() => $('#sp-amount').focus(), 150);
@@ -1025,28 +1051,48 @@ $('#sp-method').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   spendMethod = b.dataset.m;
   document.querySelectorAll('#sp-method button').forEach(x => x.classList.toggle('on', x === b));
+  syncInstVisibility();
 });
 $('#sp-save').addEventListener('click', async () => {
   const amt = Math.abs(Number($('#sp-amount').value) || 0);
   if (!amt) { toast('Enter an amount'); return; }
   if (!spendCat) { toast('Pick a category'); return; }
+  const n = spendMethod === 'credit' ? (parseInt(instSel.value, 10) || 1) : 1;
   $('#spend-modal').classList.add('hidden');
-  addManualSpend(amt);                       // fallback path (pre-Session 4 API)
-  if (txs()) {                               // Session 4: instant local ledger update
-    txs().push({ date: todayISO(), description: $('#sp-desc').value.trim(), amount: -amt,
-                 category: spendCat, source: 'manual', method: spendMethod, review_flag: '' });
-    localStorage.setItem(LS.cache, JSON.stringify(payload));
+  const desc = $('#sp-desc').value.trim();
+
+  if (n === 1) {
+    addManualSpend(amt);                     // fallback path (pre-Session 4 API)
+    if (txs()) {                             // Session 4: instant local ledger update
+      txs().push({ date: todayISO(), description: desc, amount: -amt,
+                   category: spendCat, source: 'manual', method: spendMethod, review_flag: '' });
+      localStorage.setItem(LS.cache, JSON.stringify(payload));
+    }
+  } else {                                   // installments: mirror the API's split locally
+    const parts = splitParcelas(Math.round(amt * 100), n);
+    const dates = parcelaDates(n);
+    addManualSpend(parts[0] / 100);          // only this cycle's parcela counts toward today
+    if (txs()) {
+      parts.forEach((c, k) => txs().push({
+        date: dates[k],
+        description: (desc ? desc + ' ' : '') + '(parcela ' + (k + 1) + '/' + n + ')',
+        amount: -c / 100,
+        category: spendCat, source: 'manual', method: spendMethod, review_flag: ''
+      }));
+      localStorage.setItem(LS.cache, JSON.stringify(payload));
+    }
   }
   render();
   const ok = await apiPost('add_transaction', {
     date: todayISO(),
-    description: $('#sp-desc').value.trim(),
+    description: desc,
     amount: -amt,
     category: spendCat,
     source: 'manual',
-    method: spendMethod
+    method: spendMethod,
+    installments: n
   });
-  if (ok) toast(money(amt) + ' · ' + spendCat + ' ✓');
+  if (ok) toast(money(amt) + (n > 1 ? ' em ' + n + 'x' : '') + ' · ' + spendCat + ' ✓');
 });
 
 /* ================= note ================= */
