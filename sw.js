@@ -1,5 +1,5 @@
 /* BuJo OS service worker — app shell cache. Bump VERSION on every release. */
-const VERSION = 'bujo-os-v4';
+const VERSION = 'bujo-os-v5';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

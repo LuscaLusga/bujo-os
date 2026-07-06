@@ -269,7 +269,7 @@
     </section>
   </main>
 
-  <button id="fab" title="Log a spend">+</button>
+  <button id="fab" title="Lançamento">+</button>
 
   <nav>
     <button data-view="today" class="active"><span class="ico">☀️</span>Today</button>
@@ -299,8 +299,8 @@
 <!-- ============ SPEND MODAL ============ -->
 <div class="overlay hidden" id="spend-modal">
   <div class="sheet">
-    <h3>Quick spend</h3>
-    <div class="sub">Lands in Transactions as source=manual.</div>
+    <h3>Lançamento</h3>
+    <div class="sub">Lands in Transactions as source=manual. Investments feed the invest goal, not Variable Spendings.</div>
     <label>Amount (R$)</label>
     <input id="sp-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00">
     <div class="seg" id="sp-method">
@@ -1037,8 +1037,9 @@ function openSpend() {
 }
 $('#fab').addEventListener('click', openSpend);
 
+/* chips: discretionary cats + Investments (kept OUT of DISCRETIONARY so it never counts toward varspend) */
 const catBox = $('#sp-cats');
-for (const c of DISCRETIONARY) {
+for (const c of [...DISCRETIONARY, 'Investments']) {
   const b = document.createElement('button');
   b.textContent = c;
   b.addEventListener('click', () => {
@@ -1061,8 +1062,9 @@ $('#sp-save').addEventListener('click', async () => {
   $('#spend-modal').classList.add('hidden');
   const desc = $('#sp-desc').value.trim();
 
+  const isInvest = spendCat === 'Investments';   // investments never count toward varspend
   if (n === 1) {
-    addManualSpend(amt);                     // fallback path (pre-Session 4 API)
+    if (!isInvest) addManualSpend(amt);      // fallback path (pre-Session 4 API)
     if (txs()) {                             // Session 4: instant local ledger update
       txs().push({ date: todayISO(), description: desc, amount: -amt,
                    category: spendCat, source: 'manual', method: spendMethod, review_flag: '' });
@@ -1071,7 +1073,7 @@ $('#sp-save').addEventListener('click', async () => {
   } else {                                   // installments: mirror the API's split locally
     const parts = splitParcelas(Math.round(amt * 100), n);
     const dates = parcelaDates(n);
-    addManualSpend(parts[0] / 100);          // only this cycle's parcela counts toward today
+    if (!isInvest) addManualSpend(parts[0] / 100);  // only this cycle's parcela counts toward today
     if (txs()) {
       parts.forEach((c, k) => txs().push({
         date: dates[k],
