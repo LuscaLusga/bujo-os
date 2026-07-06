@@ -854,6 +854,12 @@ function renderFinance() {
     const tgt = Number(g.target) || 0;
     const isCap = g.goal_id === 'varcap' || g.goal_id === 'fixedcap';
     if (g.goal_id === 'investmonthly') cur = spendSum(txs().filter(t => txMonth(t) === mk && t.category === 'Investments'));
+    /* invest10k / invest6x: current = manual snapshot (as of Goals.as_of) + contributions logged since.
+       Refresh current AND as_of together at the monthly ritual so nothing double-counts. */
+    if (g.goal_id === 'invest10k' || g.goal_id === 'invest6x') {
+      const asOf = String(g.as_of || '').slice(0, 10);
+      if (asOf && txs()) cur += spendSum(txs().filter(t => t.category === 'Investments' && String(t.date) > asOf));
+    }
     if (g.goal_id === 'varcap') cur = varspendMTD() || 0;
     if (g.goal_id === 'fixedcap') cur = spendSum(txs().filter(t => txMonth(t) === mk && FIXED_CATS.includes(t.category)));
     const pct = tgt ? cur / tgt : 0;
