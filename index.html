@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="BuJo OS">
 <link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
     --bg:#0E1116; --card:#171C24; --card2:#1F2630; --line:#2A3240;
@@ -26,7 +27,7 @@
   button{font:inherit; color:inherit; border:0; background:none; cursor:pointer;}
   input,textarea,select{font:inherit; color:var(--text); background:var(--card2);
     border:1px solid var(--line); border-radius:10px; padding:12px; width:100%; outline:none;}
-  input:focus,textarea:focus{border-color:var(--accent);}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent);}
 
   /* ---------- setup ---------- */
   #setup{max-width:420px; margin:0 auto; padding:48px 20px;}
@@ -94,7 +95,7 @@
   .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:60;
     display:flex; align-items:flex-end;}
   .sheet{background:var(--card); width:100%; border-radius:20px 20px 0 0; padding:20px 20px
-    calc(24px + env(safe-area-inset-bottom)); animation:up .18s ease-out;}
+    calc(24px + env(safe-area-inset-bottom)); animation:up .18s ease-out; max-height:86vh; overflow-y:auto;}
   @keyframes up{from{transform:translateY(40px); opacity:.6;} to{transform:none; opacity:1;}}
   .sheet h3{margin:0 0 4px; font-size:1.05rem;}
   .sheet .sub{color:var(--dim); font-size:.8rem; margin-bottom:16px;}
@@ -111,22 +112,46 @@
   .chips button.on{border-color:var(--accent); color:var(--text); background:rgba(139,92,246,.15);}
   .sheet label{display:block; font-size:.78rem; color:var(--dim); margin:10px 0 6px;}
   .sheet .row2{display:flex; gap:10px; margin-top:18px;}
+  .sheet .cols{display:flex; gap:10px;}
+  .sheet .cols>div{flex:1;}
   .btn-ghost{flex:1; padding:13px; border-radius:12px; background:var(--card2);
     border:1px solid var(--line); font-weight:600;}
   .btn-go{flex:2; padding:13px; border-radius:12px; background:var(--accent); color:#fff; font-weight:700;}
   .btn-go:disabled{opacity:.4;}
+  .check{display:flex; align-items:center; gap:10px; margin:14px 0 4px;}
+  .check input{width:auto;}
 
-  /* ---------- toast / stubs / settings ---------- */
-  #toast{position:fixed; left:50%; transform:translateX(-50%);
-    bottom:calc(100px + env(safe-area-inset-bottom)); background:var(--card2);
-    border:1px solid var(--line); border-radius:12px; padding:10px 18px; font-size:.85rem;
-    z-index:70; transition:opacity .3s; opacity:0; pointer-events:none; max-width:88vw; text-align:center;}
-  #toast.show{opacity:1;}
-  .stub{padding:60px 24px; text-align:center; color:var(--dim);}
-  .stub .big{font-size:2.4rem; margin-bottom:10px;}
+  /* ---------- trends ---------- */
+  .chart-card{background:var(--card); border-radius:var(--radius); padding:14px; margin-bottom:12px;}
+  .chart-card .t{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;}
+  .chart-card .t .n{font-size:.9rem; font-weight:600;}
+  .chart-card .t .s{font-size:.75rem; color:var(--dim);}
+  .chart-card canvas{width:100%!important; height:130px!important;}
+  .wk{background:var(--card); border-radius:12px; padding:12px 14px; margin-bottom:8px;}
+  .wk .l{display:flex; justify-content:space-between; font-size:.85rem; margin-bottom:7px;}
+  .wk .l .v{font-variant-numeric:tabular-nums; color:var(--dim);}
+  .bar{height:8px; background:var(--card2); border-radius:99px; overflow:hidden;}
+  .bar>div{height:100%; border-radius:99px; transition:width .4s;}
+  .stk{display:flex; justify-content:space-between; background:var(--card);
+    border-radius:12px; padding:12px 14px; margin-bottom:8px; font-size:.88rem; align-items:center;}
+  .stk .b{color:var(--dim); font-size:.8rem; font-variant-numeric:tabular-nums;}
+  .book{background:var(--card); border-radius:12px; padding:12px 14px; margin-bottom:8px;}
+  .book .l{display:flex; justify-content:space-between; font-size:.85rem; margin-bottom:7px; gap:10px;}
+  .book .l .p{color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap;}
+
+  /* ---------- settings ---------- */
   .set-card{background:var(--card); border-radius:var(--radius); padding:16px; margin-bottom:14px;}
   .set-card label{display:block; font-size:.78rem; color:var(--dim); margin:10px 0 6px;}
   .mono{font-family:ui-monospace,Menlo,monospace; font-size:.8rem; word-break:break-all; color:var(--dim);}
+  .ob-row{display:flex; align-items:center; gap:12px; padding:12px 4px; border-bottom:1px solid var(--line); width:100%; text-align:left;}
+  .ob-row:last-child{border-bottom:0;}
+  .ob-row .dot{width:12px; height:12px; border-radius:50%; flex:none;}
+  .ob-row .m{flex:1;}
+  .ob-row .m .n{font-size:.9rem; font-weight:600;}
+  .ob-row .m .d{font-size:.75rem; color:var(--dim);}
+  .ob-row .off{opacity:.45;}
+  .stub{padding:40px 24px; text-align:center; color:var(--dim);}
+  .stub .big{font-size:2.4rem; margin-bottom:10px;}
 </style>
 </head>
 <body>
@@ -169,12 +194,34 @@
       </div>
     </section>
 
-    <!-- STUBS -->
-    <section id="view-trends" class="hidden"><div class="stub"><div class="big">📈</div>Trends arrive in Session 3.</div></section>
+    <!-- TRENDS -->
+    <section id="view-trends" class="hidden">
+      <div class="seg" style="margin-top:16px" id="tr-range">
+        <button data-d="7" class="on">7 days</button>
+        <button data-d="30">30 days</button>
+      </div>
+      <h2>This week vs weekly target</h2>
+      <div id="tr-week"></div>
+      <h2>Daily charts</h2>
+      <div id="tr-charts"></div>
+      <h2>Streaks (last 30 days)</h2>
+      <div id="tr-streaks"></div>
+      <h2>Books in progress</h2>
+      <div id="tr-books"></div>
+    </section>
+
+    <!-- FINANCE STUB -->
     <section id="view-finance" class="hidden"><div class="stub"><div class="big">💰</div>Finance arrives in Session 4.</div></section>
 
     <!-- SETTINGS -->
     <section id="view-settings" class="hidden">
+      <h2>Objectives</h2>
+      <div class="set-card" id="ob-list"></div>
+      <button class="btn-primary" id="ob-add" style="margin-top:0;">+ Add objective</button>
+
+      <h2>Book progress</h2>
+      <div class="set-card" id="bk-list"></div>
+
       <h2>Connection</h2>
       <div class="set-card">
         <label>API URL</label><input id="st-url" type="url">
@@ -185,8 +232,8 @@
       <div class="set-card">
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 3 build</div>
       </div>
-      <div class="stub" style="padding:24px;">Objectives editor arrives in Session 3.</div>
     </section>
   </main>
 
@@ -239,7 +286,64 @@
   </div>
 </div>
 
+<!-- ============ OBJECTIVE MODAL ============ -->
+<div class="overlay hidden" id="obj-modal">
+  <div class="sheet">
+    <h3 id="ob-title">Edit objective</h3>
+    <div class="sub">Writes to the Objectives tab (update_objective).</div>
+    <label>kpi_id (lowercase, no spaces — permanent key)</label>
+    <input id="ob-kpiid" type="text" autocapitalize="none" placeholder="e.g. water">
+    <label>Name</label>
+    <input id="ob-name" type="text" placeholder="e.g. Water">
+    <div class="cols">
+      <div><label>Unit</label><input id="ob-unit" type="text" placeholder="glasses"></div>
+      <div><label>Direction</label>
+        <select id="ob-direction"><option value="higher">higher is better</option><option value="lower">lower is better</option></select>
+      </div>
+    </div>
+    <div class="cols">
+      <div><label>Daily target</label><input id="ob-daily" type="number" inputmode="decimal" step="any" min="0"></div>
+      <div><label>Weekly target</label><input id="ob-weekly" type="number" inputmode="decimal" step="any" min="0"></div>
+    </div>
+    <div class="cols">
+      <div><label>Sort</label><input id="ob-sort" type="number" step="1"></div>
+      <div><label>Color</label><input id="ob-color" type="color" value="#8B5CF6" style="height:48px; padding:6px;"></div>
+    </div>
+    <div class="check"><input id="ob-active" type="checkbox" checked><label style="margin:0;">Active (shows on Today)</label></div>
+    <div class="row2">
+      <button class="btn-ghost" data-close>Cancel</button>
+      <button class="btn-go" id="ob-save">Save objective</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ BOOK MODAL ============ -->
+<div class="overlay hidden" id="book-modal">
+  <div class="sheet">
+    <h3 id="bk-title"></h3>
+    <div class="sub" id="bk-sub"></div>
+    <label>Current page</label>
+    <input id="bk-current" type="number" inputmode="numeric" min="0">
+    <div class="check"><input id="bk-finished" type="checkbox"><label style="margin:0;">Mark as finished</label></div>
+    <div id="bk-tk-wrap" class="hidden">
+      <label>Takeaway (one line)</label>
+      <input id="bk-takeaway" type="text" placeholder="What stays with you?">
+    </div>
+    <div class="row2">
+      <button class="btn-ghost" data-close>Cancel</button>
+      <button class="btn-go" id="bk-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
+<style>
+  #toast{position:fixed; left:50%; transform:translateX(-50%);
+    bottom:calc(100px + env(safe-area-inset-bottom)); background:var(--card2);
+    border:1px solid var(--line); border-radius:12px; padding:10px 18px; font-size:.85rem;
+    z-index:70; transition:opacity .3s; opacity:0; pointer-events:none; max-width:88vw; text-align:center;}
+  #toast.show{opacity:1;}
+</style>
 
 <script>
 'use strict';
@@ -249,14 +353,18 @@ const LS = { url:'bujo_api_url', token:'bujo_token', queue:'bujo_queue', cache:'
 const $ = s => document.querySelector(s);
 const money = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 
-let payload = null;               // last API payload
-let currentKpi = null;            // objective open in the KPI modal
+let payload = null;
+let currentKpi = null, currentBook = null, editingNewObjective = false;
 let spendMethod = 'pix', spendCat = null;
+let trRange = 7;
+let chartRefs = [];
 
-const todayISO = () => {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-};
+const isoOf = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+const todayISO = () => isoOf(new Date());
+const isActive = o => o.active === true || String(o.active).toUpperCase() === 'TRUE';
+/* API may return all objectives (Session 3 Code.gs) or only active ones (Session 1) — both work */
+const allObjectives = () => ((payload && payload.objectives) || []).slice().sort((a,b)=>(a.sort||0)-(b.sort||0));
+const activeObjectives = () => allObjectives().filter(isActive);
 
 /* ================= API ================= */
 const cfg = () => ({ url: localStorage.getItem(LS.url), token: localStorage.getItem(LS.token) });
@@ -318,7 +426,6 @@ function todaysValue(kpi_id) {
   return r ? Number(r.value) || 0 : null;
 }
 
-/* manual spends added today from this device (Session 4 replaces this with derived varspend) */
 function manualSpendToday() {
   const s = JSON.parse(localStorage.getItem(LS.spend) || '{}');
   return s.date === todayISO() ? Number(s.total) || 0 : 0;
@@ -339,16 +446,40 @@ function streak() {
   const days = new Set(kpiRows().filter(r => r.kpi_id !== 'note').map(r => String(r.date)));
   let n = 0;
   const d = new Date();
-  if (!days.has(todayISO())) d.setDate(d.getDate() - 1);   // today not logged yet ≠ broken
+  if (!days.has(todayISO())) d.setDate(d.getDate() - 1);
   for (;;) {
-    const iso = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-    if (!days.has(iso)) break;
+    if (!days.has(isoOf(d))) break;
     n++; d.setDate(d.getDate() - 1);
   }
   return n;
 }
 
-/* ================= render ================= */
+/* per-KPI: a day "qualifies" if value>0 (higher) or logged & under daily target (lower) */
+function kpiQualifies(o, r) {
+  if (!r) return false;
+  const v = Number(r.value) || 0;
+  if (o.direction === 'lower') { const t = Number(o.daily_target) || 0; return t ? v <= t : true; }
+  return v > 0;
+}
+function kpiStreaks(o) {
+  const map = {};
+  kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) map[String(r.date)] = r; });
+  let best = 0, run = 0;
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    if (kpiQualifies(o, map[isoOf(d)])) { run++; best = Math.max(best, run); } else run = 0;
+  }
+  let cur = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    if (kpiQualifies(o, map[isoOf(d)])) cur++;
+    else if (i === 0) continue;           // today still pending doesn't break the streak
+    else break;
+  }
+  return { cur, best: Math.max(best, cur) };
+}
+
+/* ================= render: header + today ================= */
 function render() {
   const now = new Date();
   $('#h-date').textContent = now.toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
@@ -357,7 +488,8 @@ function render() {
   const s = streak();
   $('#h-streak').textContent = '🔥 ' + s + (s === 1 ? ' day' : ' days');
 
-  renderCalendar(); renderKpis(); renderNote(); renderQueueBadge();
+  renderCalendar(); renderKpis(); renderNote(); renderQueueBadge(); renderSettings();
+  if (!$('#view-trends').classList.contains('hidden')) renderTrends();
   $('#st-info').textContent = payload ? ('Last sync: ' + (payload.generated_at || '—')) : 'No data yet';
 }
 
@@ -391,7 +523,7 @@ function ringSVG(pct, color, over) {
 
 function renderKpis() {
   const box = $('#kpis'); box.innerHTML = '';
-  for (const o of ((payload && payload.objectives) || [])) {
+  for (const o of activeObjectives()) {
     const isVar = o.kpi_id === 'varspend';
     let val = todaysValue(o.kpi_id);
     if (isVar) val = (val || 0) + manualSpendToday();
@@ -424,6 +556,228 @@ function renderNote() {
   const r = kpiRows().find(r => String(r.date) === todayISO() && r.kpi_id === 'note');
   if (r && !$('#note').value) $('#note').value = r.note || '';
 }
+
+/* ================= render: trends ================= */
+function lastNDays(n) {
+  const days = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(isoOf(d));
+  }
+  return days;
+}
+
+function weekDates() {
+  const d = new Date();
+  const off = (d.getDay() + 6) % 7;               // Monday = 0
+  d.setDate(d.getDate() - off);
+  const out = [];
+  for (let i = 0; i < 7; i++) { out.push(isoOf(d)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+
+function renderTrends() {
+  chartRefs.forEach(c => c.destroy()); chartRefs = [];
+  const objs = activeObjectives();
+  const days = lastNDays(trRange);
+  const values = {};
+  objs.forEach(o => {
+    const m = {};
+    kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
+    values[o.kpi_id] = days.map(d => m[d] !== undefined ? m[d] : 0);
+  });
+
+  /* weekly totals vs weekly target */
+  const wk = weekDates();
+  const wbox = $('#tr-week'); wbox.innerHTML = '';
+  for (const o of objs) {
+    const m = {};
+    kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
+    const total = wk.reduce((s,d) => s + (m[d] || 0), 0);
+    const wt = Number(o.weekly_target) || 0;
+    const isVar = o.direction === 'lower';
+    const pct = wt ? Math.min(total / wt, 1) : 0;
+    const over = isVar && wt && total > wt;
+    const col = over ? 'var(--red)' : (o.color || 'var(--accent)');
+    const div = document.createElement('div');
+    div.className = 'wk';
+    div.innerHTML = '<div class="l"><span class="n"></span><span class="v"></span></div><div class="bar"><div></div></div>';
+    div.querySelector('.n').textContent = o.name;
+    div.querySelector('.v').textContent = (isVar ? money(total) : (Math.round(total*10)/10)) +
+      (wt ? ' / ' + (isVar ? money(wt) : wt + ' ' + o.unit) : ' · no weekly target');
+    const barIn = div.querySelector('.bar>div');
+    barIn.style.width = (wt ? pct*100 : 0) + '%';
+    barIn.style.background = col;
+    wbox.appendChild(div);
+  }
+
+  /* daily charts */
+  const cbox = $('#tr-charts'); cbox.innerHTML = '';
+  if (typeof Chart === 'undefined') {
+    cbox.innerHTML = '<div class="empty">Charts need one online load to fetch Chart.js — connect and refresh.</div>';
+  } else {
+    Chart.defaults.color = '#8A94A3';
+    Chart.defaults.font.size = 10;
+    const labels = days.map(d => d.slice(8,10) + '/' + d.slice(5,7));
+    for (const o of objs) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = '<div class="t"><span class="n"></span><span class="s"></span></div><canvas></canvas>';
+      card.querySelector('.n').textContent = o.name;
+      const sum = values[o.kpi_id].reduce((a,b)=>a+b,0);
+      card.querySelector('.s').textContent = (o.direction==='lower'? money(sum) : Math.round(sum*10)/10 + ' ' + o.unit) + ' in ' + trRange + 'd';
+      cbox.appendChild(card);
+      const t = Number(o.daily_target) || 0;
+      const datasets = [{ type:'bar', data: values[o.kpi_id], backgroundColor: (o.color||'#8B5CF6') + 'AA', borderRadius: 3 }];
+      if (t) datasets.push({ type:'line', data: days.map(()=>t), pointRadius:0, borderColor:'#8A94A3', borderDash:[4,4], borderWidth:1 });
+      chartRefs.push(new Chart(card.querySelector('canvas'), {
+        data: { labels, datasets },
+        options: {
+          responsive:true, maintainAspectRatio:false, animation:false,
+          plugins:{ legend:{display:false}, tooltip:{enabled:true} },
+          scales:{
+            x:{ grid:{display:false}, ticks:{ maxTicksLimit: trRange===7?7:6 } },
+            y:{ beginAtZero:true, grid:{color:'rgba(42,50,64,.5)'}, ticks:{ maxTicksLimit:4 } }
+          }
+        }
+      }));
+    }
+  }
+
+  /* streaks */
+  const sbox = $('#tr-streaks'); sbox.innerHTML = '';
+  for (const o of objs) {
+    const s = kpiStreaks(o);
+    const div = document.createElement('div');
+    div.className = 'stk';
+    div.innerHTML = '<span class="n"></span><span class="b"></span>';
+    div.querySelector('.n').textContent = o.name;
+    div.querySelector('.b').textContent = '🔥 ' + s.cur + '  ·  best ' + s.best;
+    sbox.appendChild(div);
+  }
+
+  /* books */
+  const bbox = $('#tr-books'); bbox.innerHTML = '';
+  const books = (payload && payload.books) || [];
+  if (!books.length) bbox.innerHTML = '<div class="empty">No books in progress.</div>';
+  for (const b of books) {
+    const tot = Number(b.total_pages) || 0, cur = Number(b.current_page) || 0;
+    const pct = tot ? Math.round(cur / tot * 100) : 0;
+    const div = document.createElement('div');
+    div.className = 'book';
+    div.innerHTML = '<div class="l"><span class="n"></span><span class="p"></span></div><div class="bar"><div></div></div>';
+    div.querySelector('.n').textContent = b.title;
+    div.querySelector('.p').textContent = cur + '/' + (tot || '?') + ' (' + pct + '%)';
+    const barIn = div.querySelector('.bar>div');
+    barIn.style.width = pct + '%';
+    barIn.style.background = 'var(--accent)';
+    bbox.appendChild(div);
+  }
+}
+
+$('#tr-range').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  trRange = Number(b.dataset.d);
+  document.querySelectorAll('#tr-range button').forEach(x => x.classList.toggle('on', x === b));
+  renderTrends();
+});
+
+/* ================= render: settings ================= */
+function renderSettings() {
+  const box = $('#ob-list'); box.innerHTML = '';
+  for (const o of allObjectives()) {
+    const row = document.createElement('button');
+    row.className = 'ob-row' + (isActive(o) ? '' : ' off');
+    row.innerHTML = '<span class="dot"></span><span class="m"><div class="n"></div><div class="d"></div></span><span>✏️</span>';
+    row.querySelector('.dot').style.background = o.color || 'var(--accent)';
+    row.querySelector('.n').textContent = o.name + (isActive(o) ? '' : ' (inactive)');
+    row.querySelector('.d').textContent = o.kpi_id + ' · daily ' + (o.daily_target || '—') + ' · weekly ' + (o.weekly_target || '—') + ' ' + o.unit;
+    row.addEventListener('click', () => openObjModal(o));
+    box.appendChild(row);
+  }
+  if (!allObjectives().length) box.innerHTML = '<div class="empty">No objectives loaded yet.</div>';
+
+  const bl = $('#bk-list'); bl.innerHTML = '';
+  const books = (payload && payload.books) || [];
+  if (!books.length) bl.innerHTML = '<div class="empty">No books in progress.</div>';
+  for (const b of books) {
+    const tot = Number(b.total_pages) || 0, cur = Number(b.current_page) || 0;
+    const row = document.createElement('button');
+    row.className = 'ob-row';
+    row.innerHTML = '<span class="m"><div class="n"></div><div class="d"></div></span><span>✏️</span>';
+    row.querySelector('.n').textContent = b.title;
+    row.querySelector('.d').textContent = cur + '/' + (tot || '?') + (tot ? ' (' + Math.round(cur/tot*100) + '%)' : '');
+    row.addEventListener('click', () => openBookModal(b));
+    bl.appendChild(row);
+  }
+}
+
+/* ---------- objective modal ---------- */
+function openObjModal(o) {
+  editingNewObjective = !o;
+  $('#ob-title').textContent = o ? 'Edit objective' : 'New objective';
+  $('#ob-kpiid').value = o ? o.kpi_id : '';
+  $('#ob-kpiid').disabled = !!o;
+  $('#ob-name').value = o ? o.name : '';
+  $('#ob-unit').value = o ? o.unit : '';
+  $('#ob-direction').value = o && o.direction === 'lower' ? 'lower' : 'higher';
+  $('#ob-daily').value = o && o.daily_target !== '' ? o.daily_target : '';
+  $('#ob-weekly').value = o && o.weekly_target !== '' ? o.weekly_target : '';
+  $('#ob-sort').value = o ? (o.sort || 0) : allObjectives().length + 1;
+  $('#ob-color').value = (o && /^#[0-9A-Fa-f]{6}$/.test(o.color)) ? o.color : '#8B5CF6';
+  $('#ob-active').checked = o ? isActive(o) : true;
+  $('#obj-modal').classList.remove('hidden');
+}
+$('#ob-add').addEventListener('click', () => openObjModal(null));
+$('#ob-save').addEventListener('click', async () => {
+  const kpi_id = $('#ob-kpiid').value.trim().toLowerCase();
+  if (!/^[a-z0-9_-]+$/.test(kpi_id)) { toast('kpi_id: lowercase letters/numbers only'); return; }
+  if (!$('#ob-name').value.trim()) { toast('Name is required'); return; }
+  const p = {
+    kpi_id,
+    name: $('#ob-name').value.trim(),
+    unit: $('#ob-unit').value.trim(),
+    direction: $('#ob-direction').value,
+    daily_target: $('#ob-daily').value === '' ? '' : Number($('#ob-daily').value),
+    weekly_target: $('#ob-weekly').value === '' ? '' : Number($('#ob-weekly').value),
+    active: $('#ob-active').checked ? 'TRUE' : 'FALSE',
+    sort: Number($('#ob-sort').value) || 0,
+    color: $('#ob-color').value
+  };
+  $('#obj-modal').classList.add('hidden');
+  const list = (payload && payload.objectives) || [];
+  const ex = list.find(x => x.kpi_id === kpi_id);
+  if (ex) Object.assign(ex, p); else list.push(p);
+  localStorage.setItem(LS.cache, JSON.stringify(payload));
+  render();
+  if (await apiPost('update_objective', p)) toast(p.name + ' saved ✓');
+});
+
+/* ---------- book modal ---------- */
+function openBookModal(b) {
+  currentBook = b;
+  $('#bk-title').textContent = b.title;
+  $('#bk-sub').textContent = b.author ? 'by ' + b.author : '';
+  $('#bk-current').value = Number(b.current_page) || 0;
+  $('#bk-finished').checked = false;
+  $('#bk-takeaway').value = '';
+  $('#bk-tk-wrap').classList.add('hidden');
+  $('#book-modal').classList.remove('hidden');
+}
+$('#bk-finished').addEventListener('change', e => $('#bk-tk-wrap').classList.toggle('hidden', !e.target.checked));
+$('#bk-save').addEventListener('click', async () => {
+  const cur = Number($('#bk-current').value) || 0;
+  const fin = $('#bk-finished').checked;
+  const p = { title: currentBook.title, current_page: fin ? (Number(currentBook.total_pages) || cur) : cur };
+  if (fin) { p.status = 'finished'; p.finished_date = todayISO(); p.takeaway = $('#bk-takeaway').value.trim(); }
+  $('#book-modal').classList.add('hidden');
+  const books = (payload && payload.books) || [];
+  if (fin) payload.books = books.filter(b => b.title !== currentBook.title);
+  else { const b = books.find(b => b.title === currentBook.title); if (b) b.current_page = cur; }
+  localStorage.setItem(LS.cache, JSON.stringify(payload));
+  render();
+  if (await apiPost('update_book', p)) toast(fin ? 'Finished — congrats 🎉' : 'Progress saved ✓');
+});
 
 /* ================= KPI modal ================= */
 function openKpiModal(o) {
@@ -510,6 +864,7 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
   ['today','trends','finance','settings'].forEach(v =>
     $('#view-' + v).classList.toggle('hidden', v !== b.dataset.view));
   $('#fab').classList.toggle('hidden', b.dataset.view !== 'today');
+  if (b.dataset.view === 'trends') renderTrends();
 }));
 
 let toastTimer;
@@ -518,7 +873,7 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-/* ================= settings ================= */
+/* ================= settings: connection ================= */
 $('#st-save').addEventListener('click', async () => {
   const url = $('#st-url').value.trim() || cfg().url;
   const token = $('#st-token').value.trim() || cfg().token;
