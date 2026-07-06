@@ -139,6 +139,17 @@
   .book .l{display:flex; justify-content:space-between; font-size:.85rem; margin-bottom:7px; gap:10px;}
   .book .l .p{color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap;}
 
+  /* ---------- finance ---------- */
+  .pline{display:flex; justify-content:space-between; padding:6px 0; font-size:.9rem;}
+  .pline span:last-child{font-variant-numeric:tabular-nums;}
+  .pline.net{border-top:1px solid var(--line); margin-top:6px; padding-top:12px; font-weight:700;}
+  .txr{display:flex; justify-content:space-between; align-items:center; gap:10px;
+    background:var(--card); border-radius:12px; padding:10px 14px; margin-bottom:6px;}
+  .txr .n{font-size:.9rem;}
+  .txr .d{font-size:.72rem; color:var(--dim); margin-top:2px;}
+  .txr .a{font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap;}
+  .txr .a.pos{color:var(--green);}
+
   /* ---------- settings ---------- */
   .set-card{background:var(--card); border-radius:var(--radius); padding:16px; margin-bottom:14px;}
   .set-card label{display:block; font-size:.78rem; color:var(--dim); margin:10px 0 6px;}
@@ -210,8 +221,29 @@
       <div id="tr-books"></div>
     </section>
 
-    <!-- FINANCE STUB -->
-    <section id="view-finance" class="hidden"><div class="stub"><div class="big">💰</div>Finance arrives in Session 4.</div></section>
+    <!-- FINANCE -->
+    <section id="view-finance" class="hidden">
+      <div class="empty hidden" id="fi-guard" style="margin-top:16px;">The API isn't sending transactions yet — paste the Session 4 Code.gs and deploy a new version.</div>
+      <div class="seg" id="fi-method" style="margin-top:16px;">
+        <button data-m="all" class="on">All</button>
+        <button data-m="pix">PIX</button>
+        <button data-m="credit">Credit</button>
+      </div>
+      <div class="set-card" style="text-align:center;">
+        <div style="font-size:1.8rem; font-weight:700;" id="fi-total-v">—</div>
+        <div class="mono" id="fi-total-s"></div>
+      </div>
+      <h2>Categories — month vs 3-month avg</h2>
+      <div id="fi-cats"></div>
+      <h2>Projection — this month</h2>
+      <div class="set-card" id="fi-proj"></div>
+      <h2>Anderson</h2>
+      <div class="set-card" id="fi-anderson"></div>
+      <h2>Goals</h2>
+      <div id="fi-goals"></div>
+      <h2>This month’s transactions</h2>
+      <div id="fi-txs"></div>
+    </section>
 
     <!-- SETTINGS -->
     <section id="view-settings" class="hidden">
@@ -232,7 +264,7 @@
       <div class="set-card">
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 3 build</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 4 build</div>
       </div>
     </section>
   </main>
@@ -349,6 +381,7 @@
 'use strict';
 /* ================= constants / storage ================= */
 const DISCRETIONARY = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Transportation','Other'];
+const FIXED_CATS = ['Father - CC & Bills','Donations & Charity','Health & Insurance','Education'];
 const LS = { url:'bujo_api_url', token:'bujo_token', queue:'bujo_queue', cache:'bujo_cache', spend:'bujo_manual_spend' };
 const $ = s => document.querySelector(s);
 const money = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -357,6 +390,7 @@ let payload = null;
 let currentKpi = null, currentBook = null, editingNewObjective = false;
 let spendMethod = 'pix', spendCat = null;
 let trRange = 7;
+let finMethod = 'all';
 let chartRefs = [];
 
 const isoOf = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -462,17 +496,25 @@ function kpiQualifies(o, r) {
   return v > 0;
 }
 function kpiStreaks(o) {
+  const derived = o.kpi_id === 'varspend' && !!txs();
   const map = {};
-  kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) map[String(r.date)] = r; });
+  if (derived) {
+    const sm = dailySpendMap();
+    Object.keys(sm).forEach(d => map[d] = { value: sm[d] });
+  } else {
+    kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) map[String(r.date)] = r; });
+  }
+  const q = iso => derived ? kpiQualifies(o, map[iso] || { value: 0 })   // no spend that day = under cap
+                           : kpiQualifies(o, map[iso]);
   let best = 0, run = 0;
   for (let i = 29; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    if (kpiQualifies(o, map[isoOf(d)])) { run++; best = Math.max(best, run); } else run = 0;
+    if (q(isoOf(d))) { run++; best = Math.max(best, run); } else run = 0;
   }
   let cur = 0;
   for (let i = 0; i < 30; i++) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    if (kpiQualifies(o, map[isoOf(d)])) cur++;
+    if (q(isoOf(d))) cur++;
     else if (i === 0) continue;           // today still pending doesn't break the streak
     else break;
   }
@@ -490,6 +532,7 @@ function render() {
 
   renderCalendar(); renderKpis(); renderNote(); renderQueueBadge(); renderSettings();
   if (!$('#view-trends').classList.contains('hidden')) renderTrends();
+  if (!$('#view-finance').classList.contains('hidden')) renderFinance();
   $('#st-info').textContent = payload ? ('Last sync: ' + (payload.generated_at || '—')) : 'No data yet';
 }
 
@@ -525,10 +568,21 @@ function renderKpis() {
   const box = $('#kpis'); box.innerHTML = '';
   for (const o of activeObjectives()) {
     const isVar = o.kpi_id === 'varspend';
+    const derived = isVar && !!txs();          // Session 4: varspend read from Transactions
     let val = todaysValue(o.kpi_id);
-    if (isVar) val = (val || 0) + manualSpendToday();
+    let target = Number(o.daily_target) || 0;
+    let sub;
+    if (derived) {
+      val = varspendMTD();
+      target = Number((goalRow('varcap') || {}).target) || target * 30;
+      sub = 'month so far · cap ' + money(target);
+    } else if (isVar) {
+      val = (val || 0) + manualSpendToday();
+      sub = target > 0 ? 'target ' + money(target) : 'no target yet · ' + o.unit;
+    } else {
+      sub = target > 0 ? ('target ' + target + ' ' + o.unit) : 'no target yet · ' + o.unit;
+    }
     const logged = val !== null;
-    const target = Number(o.daily_target) || 0;
     let pct = null, over = false;
     if (target > 0) {
       pct = (val || 0) / target;
@@ -536,8 +590,6 @@ function renderKpis() {
       pct = Math.min(pct, 1);
     }
     const shown = !logged ? '—' : (isVar ? Math.round(val) : (Number.isInteger(val) ? val : val.toFixed(1)));
-    const sub = target > 0 ? ('target ' + (isVar ? money(target) : target + ' ' + o.unit))
-                           : 'no target yet · ' + o.unit;
     const card = document.createElement('button');
     card.className = 'kpi';
     card.innerHTML =
@@ -546,8 +598,8 @@ function renderKpis() {
       '<div class="meta"><div class="name"></div><div class="sub"></div></div>';
     card.querySelector('.val').textContent = shown;
     card.querySelector('.name').textContent = o.name;
-    card.querySelector('.sub').textContent = sub + (isVar && manualSpendToday() ? ' · incl. quick spends' : '');
-    card.addEventListener('click', () => openKpiModal(o));
+    card.querySelector('.sub').textContent = sub + (!derived && isVar && manualSpendToday() ? ' · incl. quick spends' : '');
+    card.addEventListener('click', () => derived ? showView('finance') : openKpiModal(o));
     box.appendChild(card);
   }
 }
@@ -580,10 +632,12 @@ function renderTrends() {
   chartRefs.forEach(c => c.destroy()); chartRefs = [];
   const objs = activeObjectives();
   const days = lastNDays(trRange);
+  const spendMap = txs() ? dailySpendMap() : null;   // Session 4: varspend derived from Transactions
   const values = {};
   objs.forEach(o => {
     const m = {};
-    kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
+    if (o.kpi_id === 'varspend' && spendMap) Object.assign(m, spendMap);
+    else kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
     values[o.kpi_id] = days.map(d => m[d] !== undefined ? m[d] : 0);
   });
 
@@ -592,7 +646,8 @@ function renderTrends() {
   const wbox = $('#tr-week'); wbox.innerHTML = '';
   for (const o of objs) {
     const m = {};
-    kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
+    if (o.kpi_id === 'varspend' && spendMap) Object.assign(m, spendMap);
+    else kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
     const total = wk.reduce((s,d) => s + (m[d] || 0), 0);
     const wt = Number(o.weekly_target) || 0;
     const isVar = o.direction === 'lower';
@@ -680,6 +735,153 @@ $('#tr-range').addEventListener('click', e => {
   trRange = Number(b.dataset.d);
   document.querySelectorAll('#tr-range button').forEach(x => x.classList.toggle('on', x === b));
   renderTrends();
+});
+
+/* ================= finance ================= */
+const txs = () => (payload && payload.transactions) || null;   // null = API without Session 4 update
+const thisMonthKey = () => todayISO().slice(0,7);
+const txMonth = t => String(t.date).slice(0,7);
+function priorMonthKeys(n) {
+  const out = [];
+  for (let i = 1; i <= n; i++) {
+    const x = new Date(); x.setDate(1); x.setMonth(x.getMonth() - i);
+    out.push(isoOf(x).slice(0,7));
+  }
+  return out;
+}
+function spendSum(rows) { return rows.reduce((s,t) => s + (Number(t.amount) < 0 ? -Number(t.amount) : 0), 0); }
+function varspendMTD() {
+  if (!txs()) return null;
+  const mk = thisMonthKey();
+  return spendSum(txs().filter(t => txMonth(t) === mk && DISCRETIONARY.includes(t.category)));
+}
+function dailySpendMap() {
+  const m = {};
+  (txs() || []).forEach(t => {
+    if (Number(t.amount) < 0 && DISCRETIONARY.includes(t.category)) {
+      const d = String(t.date);
+      m[d] = (m[d] || 0) + (-Number(t.amount));
+    }
+  });
+  return m;
+}
+const recurringRows = () => (payload && payload.recurring) || [];
+function recActive(r, mk) {
+  const s = r.start ? String(r.start).slice(0,7) : '';
+  const e = r.end ? String(r.end).slice(0,7) : '';
+  return (!s || s <= mk) && (!e || e >= mk);
+}
+const goalRow = id => ((payload && payload.goals) || []).find(g => g.goal_id === id);
+const signed = v => (v < 0 ? '−' : '') + money(Math.abs(v));
+const projLine = (label, v) => '<div class="pline"><span>' + label + '</span><span>' + signed(v) + '</span></div>';
+
+function barRow(name, valueText, pct, color) {
+  const div = document.createElement('div');
+  div.className = 'wk';
+  div.innerHTML = '<div class="l"><span class="n"></span><span class="v"></span></div><div class="bar"><div></div></div>';
+  div.querySelector('.n').textContent = name;
+  div.querySelector('.v').textContent = valueText;
+  const bi = div.querySelector('.bar>div');
+  bi.style.width = Math.min(Math.max(pct, 0), 1) * 100 + '%';
+  bi.style.background = color;
+  return div;
+}
+
+function renderFinance() {
+  if (!txs()) { $('#fi-guard').classList.remove('hidden'); return; }
+  $('#fi-guard').classList.add('hidden');
+  const mk = thisMonthKey();
+  const prior = priorMonthKeys(3);
+  const rows = txs().filter(t => finMethod === 'all' || t.method === finMethod);
+  const mtdRows = rows.filter(t => txMonth(t) === mk);
+
+  /* month total for the selected method */
+  $('#fi-total-v').textContent = money(spendSum(mtdRows));
+  $('#fi-total-s').textContent = (finMethod === 'all' ? 'All methods' : finMethod === 'pix' ? 'PIX' : 'Credit card') + ' · spent in ' + mk;
+
+  /* categories: MTD vs trailing-3-month average */
+  const cbox = $('#fi-cats'); cbox.innerHTML = '';
+  const mtdCat = {}, avgCat = {};
+  mtdRows.forEach(t => { if (Number(t.amount) < 0) mtdCat[t.category] = (mtdCat[t.category] || 0) + (-Number(t.amount)); });
+  rows.filter(t => prior.includes(txMonth(t))).forEach(t => {
+    if (Number(t.amount) < 0) avgCat[t.category] = (avgCat[t.category] || 0) + (-Number(t.amount));
+  });
+  Object.keys(avgCat).forEach(k => avgCat[k] /= 3);
+  const names = [...new Set([...Object.keys(mtdCat), ...Object.keys(avgCat)])]
+    .sort((a,b) => (mtdCat[b] || 0) - (mtdCat[a] || 0));
+  if (!names.length) cbox.innerHTML = '<div class="empty">No spending recorded for this filter yet.</div>';
+  for (const c of names) {
+    const m = mtdCat[c] || 0, a = avgCat[c] || 0;
+    const over = a > 0 && m > a;
+    cbox.appendChild(barRow(c, money(m) + ' · avg ' + money(a),
+      a ? m / a : (m > 0 ? 1 : 0), over ? 'var(--red)' : 'var(--green)'));
+  }
+
+  /* projection card (same math as the Projection tab) */
+  const act = recurringRows().filter(r => recActive(r, mk));
+  const inc = act.reduce((s,r) => s + (Number(r.amount) > 0 ? Number(r.amount) : 0), 0);
+  const fx  = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && !r.end ? a : 0); }, 0);
+  const ins = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && r.end ? a : 0); }, 0);
+  const varEst = -spendSum(txs().filter(t => prior.includes(txMonth(t)) && DISCRETIONARY.includes(t.category))) / 3;
+  $('#fi-proj').innerHTML =
+    projLine('Income', inc) + projLine('Fixed', fx) + projLine('Installments', ins) +
+    projLine('Variable (3m avg)', varEst) +
+    '<div class="pline net"><span>Projected net</span><span>' + signed(inc + fx + ins + varEst) + '</span></div>';
+
+  /* Anderson card */
+  const fat = spendSum(txs().filter(t => txMonth(t) === mk && t.method === 'credit'));
+  const internetRow = recurringRows().find(r => /internet/i.test(String(r.name)));
+  const energyRow = recurringRows().find(r => /energ/i.test(String(r.name)));
+  const internet = internetRow ? Math.abs(Number(internetRow.amount) || 0) : 0;
+  const energy = energyRow ? Math.abs(Number(energyRow.amount) || 0) : 0;
+  const arrears = Number((goalRow('andersonarrears') || {}).current) || 0;
+  $('#fi-anderson').innerHTML =
+    projLine('CC fatura (building)', -fat) + projLine('Internet', -internet) +
+    (energy ? projLine('Energy', -energy) : '<div class="pline"><span>Energy</span><span style="color:var(--dim)">pending</span></div>') +
+    projLine('Arrears', -arrears) +
+    '<div class="pline net"><span>Total owed</span><span>' + signed(-(fat + internet + energy + arrears)) + '</span></div>';
+
+  /* goals: R$ + %, invest10k first; monthly caps computed live */
+  const gbox = $('#fi-goals'); gbox.innerHTML = '';
+  const gl = ((payload && payload.goals) || []).filter(g => g.goal_id !== 'andersonarrears');
+  gl.sort((a,b) => (a.goal_id === 'invest10k' ? -1 : b.goal_id === 'invest10k' ? 1 : 0));
+  for (const g of gl) {
+    let cur = Number(g.current) || 0;
+    const tgt = Number(g.target) || 0;
+    const isCap = g.goal_id === 'varcap' || g.goal_id === 'fixedcap';
+    if (g.goal_id === 'investmonthly') cur = spendSum(txs().filter(t => txMonth(t) === mk && t.category === 'Investments'));
+    if (g.goal_id === 'varcap') cur = varspendMTD() || 0;
+    if (g.goal_id === 'fixedcap') cur = spendSum(txs().filter(t => txMonth(t) === mk && FIXED_CATS.includes(t.category)));
+    const pct = tgt ? cur / tgt : 0;
+    const over = isCap && tgt && cur > tgt;
+    gbox.appendChild(barRow(g.name, money(cur) + ' / ' + money(tgt) + ' (' + Math.round(pct * 100) + '%)',
+      pct, over ? 'var(--red)' : (isCap ? 'var(--amber)' : 'var(--green)')));
+  }
+
+  /* transaction list for the selected method */
+  const tbox = $('#fi-txs'); tbox.innerHTML = '';
+  const list = mtdRows.slice().sort((a,b) => String(b.date).localeCompare(String(a.date)));
+  if (!list.length) tbox.innerHTML = '<div class="empty">No transactions this month.</div>';
+  for (const t of list) {
+    const a = Number(t.amount) || 0;
+    const div = document.createElement('div');
+    div.className = 'txr';
+    div.innerHTML = '<div class="m"><div class="n"></div><div class="d"></div></div><div class="a"></div>';
+    div.querySelector('.n').textContent = t.description || t.category;
+    div.querySelector('.d').textContent = String(t.date).slice(8,10) + '/' + String(t.date).slice(5,7) +
+      ' · ' + t.category + (t.source === 'manual' ? ' · manual' : '');
+    const av = div.querySelector('.a');
+    av.textContent = (a >= 0 ? '+' : '−') + money(Math.abs(a));
+    if (a > 0) av.classList.add('pos');
+    tbox.appendChild(div);
+  }
+}
+
+$('#fi-method').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  finMethod = b.dataset.m;
+  document.querySelectorAll('#fi-method button').forEach(x => x.classList.toggle('on', x === b));
+  renderFinance();
 });
 
 /* ================= render: settings ================= */
@@ -829,7 +1031,12 @@ $('#sp-save').addEventListener('click', async () => {
   if (!amt) { toast('Enter an amount'); return; }
   if (!spendCat) { toast('Pick a category'); return; }
   $('#spend-modal').classList.add('hidden');
-  addManualSpend(amt);
+  addManualSpend(amt);                       // fallback path (pre-Session 4 API)
+  if (txs()) {                               // Session 4: instant local ledger update
+    txs().push({ date: todayISO(), description: $('#sp-desc').value.trim(), amount: -amt,
+                 category: spendCat, source: 'manual', method: spendMethod, review_flag: '' });
+    localStorage.setItem(LS.cache, JSON.stringify(payload));
+  }
   render();
   const ok = await apiPost('add_transaction', {
     date: todayISO(),
@@ -859,13 +1066,15 @@ document.querySelectorAll('[data-close]').forEach(b =>
 document.querySelectorAll('.overlay').forEach(o =>
   o.addEventListener('click', e => { if (e.target === o) o.classList.add('hidden'); }));
 
-document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
-  ['today','trends','finance','settings'].forEach(v =>
-    $('#view-' + v).classList.toggle('hidden', v !== b.dataset.view));
-  $('#fab').classList.toggle('hidden', b.dataset.view !== 'today');
-  if (b.dataset.view === 'trends') renderTrends();
-}));
+function showView(v) {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x.dataset.view === v));
+  ['today','trends','finance','settings'].forEach(k =>
+    $('#view-' + k).classList.toggle('hidden', k !== v));
+  $('#fab').classList.toggle('hidden', v !== 'today');
+  if (v === 'trends') renderTrends();
+  if (v === 'finance') renderFinance();
+}
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
 
 let toastTimer;
 function toast(msg) {
