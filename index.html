@@ -1174,7 +1174,19 @@ $('#su-go').addEventListener('click', async () => {
 window.addEventListener('online', flushQueue);
 
 (function boot() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    /* updateViaCache:'none' → always fetch sw.js from the network (beats GitHub Pages' 10-min cache);
+       reg.update() → explicit update check on every launch;
+       controllerchange → when a new SW takes over, reload once so the fresh shell shows immediately. */
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(reg => { try { reg.update(); } catch (e) {} })
+      .catch(() => {});
+    let hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) { hadController = true; return; }   // first-ever install: no reload needed
+      location.reload();
+    });
+  }
   const { url, token } = cfg();
   if (!url || !token) { $('#setup').classList.remove('hidden'); return; }
   $('#app').classList.remove('hidden');
