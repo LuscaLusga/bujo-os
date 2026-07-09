@@ -52,9 +52,17 @@
 
   /* ---------- calendar ---------- */
   .timeline{display:flex; flex-direction:column; gap:2px;}
-  .event{display:flex; gap:12px; background:var(--card); border-radius:12px; padding:10px 14px; align-items:baseline;}
+  .event{display:flex; gap:12px; background:var(--card); border-radius:12px; padding:10px 14px;
+    align-items:baseline; width:100%; text-align:left;}
   .event .time{color:var(--accent); font-variant-numeric:tabular-nums; font-size:.85rem; min-width:76px;}
-  .event .title{font-size:.95rem;}
+  .event .title{font-size:.95rem; flex:1;}
+  .event .chk{width:20px; height:20px; border:2px solid var(--line); border-radius:50%;
+    flex:none; align-self:center; display:flex; align-items:center; justify-content:center;
+    font-size:.7rem; color:transparent;}
+  .event.done{opacity:.5;}
+  .event.done .title{text-decoration:line-through;}
+  .event.done .chk{background:var(--green); border-color:var(--green); color:#fff;}
+  .cal-done-link{color:var(--dim); font-size:.8rem; padding:8px 2px; text-align:left;}
   .empty{color:var(--dim); font-size:.9rem; padding:8px 2px;}
 
   /* ---------- KPI cards ---------- */
@@ -251,8 +259,12 @@
       <div class="set-card" id="ob-list"></div>
       <button class="btn-primary" id="ob-add" style="margin-top:0;">+ Add objective</button>
 
-      <h2>Book progress</h2>
+      <h2>Books — reading now</h2>
       <div class="set-card" id="bk-list"></div>
+
+      <h2>Reading list</h2>
+      <div class="set-card" id="bk-queue"></div>
+      <button class="btn-primary" id="bk-add" style="margin-top:0;">+ Add book</button>
 
       <h2>Connection</h2>
       <div class="set-card">
@@ -264,7 +276,7 @@
       <div class="set-card">
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 4 build</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 6 build (v8)</div>
       </div>
     </section>
   </main>
@@ -288,6 +300,11 @@
       <button id="km-minus">−</button>
       <input id="km-value" type="number" inputmode="decimal" step="any" min="0">
       <button id="km-plus">＋</button>
+    </div>
+    <div id="km-book-wrap" class="hidden">
+      <label>Add these pages to…</label>
+      <div class="chips" id="km-books"></div>
+      <div class="sub" id="km-book-hint" style="margin-bottom:0;"></div>
     </div>
     <div class="row2">
       <button class="btn-ghost" data-close>Cancel</button>
@@ -358,8 +375,18 @@
   <div class="sheet">
     <h3 id="bk-title"></h3>
     <div class="sub" id="bk-sub"></div>
-    <label>Current page</label>
-    <input id="bk-current" type="number" inputmode="numeric" min="0">
+    <label>Title</label>
+    <input id="bk-name" type="text" placeholder="Book title">
+    <label>Author</label>
+    <input id="bk-author" type="text" placeholder="Author">
+    <div class="cols">
+      <div><label>Total pages</label><input id="bk-total" type="number" inputmode="numeric" min="0"></div>
+      <div><label>Current page</label><input id="bk-current" type="number" inputmode="numeric" min="0"></div>
+    </div>
+    <div class="seg" id="bk-status" style="margin-top:14px;">
+      <button data-s="to_read">To read</button>
+      <button data-s="reading">Reading now</button>
+    </div>
     <div class="check"><input id="bk-finished" type="checkbox"><label style="margin:0;">Mark as finished</label></div>
     <div id="bk-tk-wrap" class="hidden">
       <label>Takeaway (one line)</label>
@@ -386,7 +413,7 @@
 /* ================= constants / storage ================= */
 const DISCRETIONARY = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Transportation','Other'];
 const FIXED_CATS = ['Father - CC & Bills','Donations & Charity','Health & Insurance','Education'];
-const LS = { url:'bujo_api_url', token:'bujo_token', queue:'bujo_queue', cache:'bujo_cache', spend:'bujo_manual_spend' };
+const LS = { url:'bujo_api_url', token:'bujo_token', queue:'bujo_queue', cache:'bujo_cache', spend:'bujo_manual_spend', caldone:'bujo_cal_done' };
 const $ = s => document.querySelector(s);
 const money = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 
@@ -458,6 +485,13 @@ function renderQueueBadge() {
 
 /* ================= state helpers ================= */
 const kpiRows = () => (payload && payload.kpi_log) || [];
+
+/* Books: API (Session 6) sends all non-finished books; older API sends only status=reading.
+   Books with no status are treated as reading (backwards compatibility). */
+const allBooks = () => (payload && payload.books) || [];
+const bookStatus = b => String(b.status || 'reading').toLowerCase();
+const readingBooks = () => allBooks().filter(b => bookStatus(b) === 'reading');
+const toReadBooks = () => allBooks().filter(b => bookStatus(b) !== 'reading' && bookStatus(b) !== 'finished');
 
 function todaysValue(kpi_id) {
   const r = kpiRows().find(r => String(r.date) === todayISO() && r.kpi_id === kpi_id);
@@ -540,20 +574,58 @@ function render() {
   $('#st-info').textContent = payload ? ('Last sync: ' + (payload.generated_at || '—')) : 'No data yet';
 }
 
+/* Done-toggle is VIEW-ONLY: stored on this device (localStorage), resets each day,
+   never writes to Google Calendar. */
+let calShowDone = false;
+function calDoneKeys() {
+  const s = JSON.parse(localStorage.getItem(LS.caldone) || '{}');
+  return s.date === todayISO() ? (s.keys || []) : [];
+}
+function setCalDoneKeys(keys) {
+  localStorage.setItem(LS.caldone, JSON.stringify({ date: todayISO(), keys }));
+}
+const evKey = e => (e.all_day ? 'allday' : String(e.start)) + '|' + e.title;
+function toggleEventDone(e) {
+  const k = evKey(e);
+  let keys = calDoneKeys();
+  keys = keys.includes(k) ? keys.filter(x => x !== k) : keys.concat(k);
+  setCalDoneKeys(keys);
+  if (!keys.length) calShowDone = false;
+  renderCalendar();
+}
+
 function renderCalendar() {
   const box = $('#cal'); box.innerHTML = '';
   const evs = ((payload && payload.calendar) || [])
     .filter(e => e.date === todayISO())
     .sort((a,b) => (a.all_day ? '' : a.start).localeCompare(b.all_day ? '' : b.start));
   if (!evs.length) { box.innerHTML = '<div class="empty">No events today.</div>'; return; }
-  for (const e of evs) {
+
+  const doneKeys = calDoneKeys();
+  const pending = evs.filter(e => !doneKeys.includes(evKey(e)));
+  const done = evs.filter(e => doneKeys.includes(evKey(e)));
+
+  const makeRow = (e, isDone) => {
     const t = e.all_day ? 'All day' : e.start.slice(11,16) + '–' + e.end.slice(11,16);
-    const div = document.createElement('div');
-    div.className = 'event';
-    div.innerHTML = '<span class="time"></span><span class="title"></span>';
-    div.querySelector('.time').textContent = t;
-    div.querySelector('.title').textContent = e.title;
-    box.appendChild(div);
+    const btn = document.createElement('button');
+    btn.className = 'event' + (isDone ? ' done' : '');
+    btn.innerHTML = '<span class="time"></span><span class="title"></span><span class="chk">✓</span>';
+    btn.querySelector('.time').textContent = t;
+    btn.querySelector('.title').textContent = e.title;
+    btn.addEventListener('click', () => toggleEventDone(e));
+    box.appendChild(btn);
+  };
+
+  pending.forEach(e => makeRow(e, false));
+  if (!pending.length) box.innerHTML = '<div class="empty">All done for today 🎉</div>';
+
+  if (done.length) {
+    const link = document.createElement('button');
+    link.className = 'cal-done-link';
+    link.textContent = calShowDone ? 'Hide done' : 'Done (' + done.length + ') — show';
+    link.addEventListener('click', () => { calShowDone = !calShowDone; renderCalendar(); });
+    box.appendChild(link);
+    if (calShowDone) done.forEach(e => makeRow(e, true));
   }
 }
 
@@ -717,7 +789,7 @@ function renderTrends() {
 
   /* books */
   const bbox = $('#tr-books'); bbox.innerHTML = '';
-  const books = (payload && payload.books) || [];
+  const books = readingBooks();
   if (!books.length) bbox.innerHTML = '<div class="empty">No books in progress.</div>';
   for (const b of books) {
     const tot = Number(b.total_pages) || 0, cur = Number(b.current_page) || 0;
@@ -910,17 +982,30 @@ function renderSettings() {
   if (!allObjectives().length) box.innerHTML = '<div class="empty">No objectives loaded yet.</div>';
 
   const bl = $('#bk-list'); bl.innerHTML = '';
-  const books = (payload && payload.books) || [];
-  if (!books.length) bl.innerHTML = '<div class="empty">No books in progress.</div>';
-  for (const b of books) {
+  const reading = readingBooks();
+  if (!reading.length) bl.innerHTML = '<div class="empty">No books in progress.</div>';
+  for (const b of reading) {
     const tot = Number(b.total_pages) || 0, cur = Number(b.current_page) || 0;
     const row = document.createElement('button');
     row.className = 'ob-row';
     row.innerHTML = '<span class="m"><div class="n"></div><div class="d"></div></span><span>✏️</span>';
     row.querySelector('.n').textContent = b.title;
-    row.querySelector('.d').textContent = cur + '/' + (tot || '?') + (tot ? ' (' + Math.round(cur/tot*100) + '%)' : '');
+    row.querySelector('.d').textContent = (b.author ? b.author + ' · ' : '') + cur + '/' + (tot || '?') + (tot ? ' (' + Math.round(cur/tot*100) + '%)' : '');
     row.addEventListener('click', () => openBookModal(b));
     bl.appendChild(row);
+  }
+
+  const bq = $('#bk-queue'); bq.innerHTML = '';
+  const queue = toReadBooks();
+  if (!queue.length) bq.innerHTML = '<div class="empty">Reading list is empty — add the next book below. (Needs the Session 6 Code.gs to show existing to-read rows.)</div>';
+  for (const b of queue) {
+    const row = document.createElement('button');
+    row.className = 'ob-row';
+    row.innerHTML = '<span class="m"><div class="n"></div><div class="d"></div></span><span>✏️</span>';
+    row.querySelector('.n').textContent = b.title;
+    row.querySelector('.d').textContent = (b.author || 'author?') + ' · ' + (Number(b.total_pages) || '?') + ' pages';
+    row.addEventListener('click', () => openBookModal(b));
+    bq.appendChild(row);
   }
 }
 
@@ -965,39 +1050,111 @@ $('#ob-save').addEventListener('click', async () => {
   if (await apiPost('update_objective', p)) toast(p.name + ' saved ✓');
 });
 
-/* ---------- book modal ---------- */
-function openBookModal(b) {
+/* ---------- book modal (edit existing or add new) ---------- */
+let bookStatusSel = 'reading';
+function setBookStatusSeg(s) {
+  bookStatusSel = s;
+  document.querySelectorAll('#bk-status button').forEach(x => x.classList.toggle('on', x.dataset.s === s));
+}
+$('#bk-status').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  setBookStatusSeg(b.dataset.s);
+});
+
+function openBookModal(b) {          // b = null → new book
   currentBook = b;
-  $('#bk-title').textContent = b.title;
-  $('#bk-sub').textContent = b.author ? 'by ' + b.author : '';
-  $('#bk-current').value = Number(b.current_page) || 0;
+  $('#bk-title').textContent = b ? 'Edit book' : 'New book';
+  $('#bk-sub').textContent = b ? 'Updates the Books tab (update_book).' : 'Adds a row to the Books tab.';
+  $('#bk-name').value = b ? b.title : '';
+  $('#bk-author').value = b ? (b.author || '') : '';
+  $('#bk-total').value = b ? (Number(b.total_pages) || '') : '';
+  $('#bk-current').value = b ? (Number(b.current_page) || 0) : 0;
+  setBookStatusSeg(b ? (bookStatus(b) === 'reading' ? 'reading' : 'to_read') : 'to_read');
   $('#bk-finished').checked = false;
   $('#bk-takeaway').value = '';
   $('#bk-tk-wrap').classList.add('hidden');
   $('#book-modal').classList.remove('hidden');
+  if (!b) setTimeout(() => $('#bk-name').focus(), 150);
 }
+$('#bk-add').addEventListener('click', () => openBookModal(null));
 $('#bk-finished').addEventListener('change', e => $('#bk-tk-wrap').classList.toggle('hidden', !e.target.checked));
+
 $('#bk-save').addEventListener('click', async () => {
+  const name = $('#bk-name').value.trim();
+  if (!name) { toast('Title is required'); return; }
+  const isNew = !currentBook;
+  if (isNew && allBooks().some(b => b.title.trim().toLowerCase() === name.toLowerCase())) {
+    toast('A book with this title already exists'); return;
+  }
+  const tot = Number($('#bk-total').value) || 0;
   const cur = Number($('#bk-current').value) || 0;
   const fin = $('#bk-finished').checked;
-  const p = { title: currentBook.title, current_page: fin ? (Number(currentBook.total_pages) || cur) : cur };
-  if (fin) { p.status = 'finished'; p.finished_date = todayISO(); p.takeaway = $('#bk-takeaway').value.trim(); }
+  const author = $('#bk-author').value.trim();
+  const status = fin ? 'finished' : bookStatusSel;
+
+  const p = {
+    title: isNew ? name : currentBook.title,
+    author: author,
+    total_pages: tot || '',
+    status: status,
+    current_page: fin ? (tot || cur) : cur
+  };
+  if (!isNew && name !== currentBook.title) p.new_title = name;   // rename (Session 6 Code.gs)
+  if (fin) { p.finished_date = todayISO(); p.takeaway = $('#bk-takeaway').value.trim(); }
   $('#book-modal').classList.add('hidden');
-  const books = (payload && payload.books) || [];
-  if (fin) payload.books = books.filter(b => b.title !== currentBook.title);
-  else { const b = books.find(b => b.title === currentBook.title); if (b) b.current_page = cur; }
-  localStorage.setItem(LS.cache, JSON.stringify(payload));
+
+  /* local mirror */
+  if (fin) {
+    payload.books = allBooks().filter(b => b !== currentBook);
+  } else if (isNew) {
+    if (payload) { payload.books = allBooks(); payload.books.push({ title: name, author, total_pages: tot, current_page: cur, status }); }
+  } else {
+    Object.assign(currentBook, { title: name, author, total_pages: tot, current_page: p.current_page, status });
+  }
+  if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
   render();
-  if (await apiPost('update_book', p)) toast(fin ? 'Finished — congrats 🎉' : 'Progress saved ✓');
+  if (await apiPost('update_book', p)) toast(fin ? 'Finished — congrats 🎉' : (isNew ? name + ' added ✓' : 'Book saved ✓'));
 });
 
 /* ================= KPI modal ================= */
+/* Readings KPI ↔ Books link: pages logged today can advance one active book.
+   Delta-aware — only the CHANGE vs. the value already logged today is added,
+   so re-editing today's number never double-counts. */
+const isReadingKpi = o => !!o && (/page/i.test(String(o.unit || '')) ||
+  ['reading', 'readings', 'read'].includes(String(o.kpi_id || '').toLowerCase()));
+let kmBook = null, kmBaseline = 0;
+
+function renderKmBooks() {
+  const box = $('#km-books'); box.innerHTML = '';
+  const books = readingBooks();
+  const opts = [{ title: null, label: 'No book' }].concat(books.map(b => ({ title: b.title, label: b.title })));
+  for (const o of opts) {
+    const btn = document.createElement('button');
+    btn.textContent = o.label;
+    btn.classList.toggle('on', kmBook === o.title);
+    btn.addEventListener('click', () => { kmBook = o.title; renderKmBooks(); });
+    box.appendChild(btn);
+  }
+  const b = books.find(x => x.title === kmBook);
+  $('#km-book-hint').textContent = b
+    ? 'Now at p. ' + (Number(b.current_page) || 0) + (Number(b.total_pages) ? ' of ' + b.total_pages : '')
+    : 'Pages won’t update any book.';
+}
+
 function openKpiModal(o) {
   currentKpi = o;
   $('#km-name').textContent = o.name;
   $('#km-sub').textContent = o.unit + (Number(o.daily_target) ? ' · daily target ' + o.daily_target : '');
   const v = todaysValue(o.kpi_id);
   $('#km-value').value = v === null ? 0 : v;
+  const bookMode = isReadingKpi(o) && readingBooks().length > 0;
+  $('#km-book-wrap').classList.toggle('hidden', !bookMode);
+  if (bookMode) {
+    kmBaseline = v === null ? 0 : Number(v) || 0;
+    const books = readingBooks();
+    kmBook = books.length === 1 ? books[0].title : null;   // single active book: preselect
+    renderKmBooks();
+  } else { kmBook = null; }
   $('#kpi-modal').classList.remove('hidden');
 }
 const kpiStep = () => currentKpi && currentKpi.unit === 'hours' ? 0.5 : 1;
@@ -1007,8 +1164,24 @@ $('#km-save').addEventListener('click', async () => {
   const value = Number($('#km-value').value) || 0;
   $('#kpi-modal').classList.add('hidden');
   upsertLocalKpi(currentKpi.kpi_id, value);
+
+  /* book sync (Readings only) */
+  let bookMsg = '';
+  if (kmBook) {
+    const delta = value - kmBaseline;
+    const b = readingBooks().find(x => x.title === kmBook);
+    if (b && delta !== 0) {
+      const tot = Number(b.total_pages) || 0;
+      let cur = (Number(b.current_page) || 0) + delta;
+      cur = Math.max(0, tot ? Math.min(cur, tot) : cur);
+      b.current_page = cur;
+      localStorage.setItem(LS.cache, JSON.stringify(payload));
+      bookMsg = ' · ' + b.title + ' → p. ' + cur;
+      apiPost('update_book', { title: b.title, current_page: cur });
+    }
+  }
   render();
-  if (await apiPost('log_kpi', { date: todayISO(), kpi_id: currentKpi.kpi_id, value })) toast(currentKpi.name + ' saved ✓');
+  if (await apiPost('log_kpi', { date: todayISO(), kpi_id: currentKpi.kpi_id, value })) toast(currentKpi.name + ' saved' + bookMsg + ' ✓');
 });
 
 /* ================= spend modal ================= */
