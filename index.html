@@ -14,7 +14,7 @@
 <style>
   :root{
     --bg:#0E1116; --card:#171C24; --card2:#1F2630; --line:#2A3240;
-    --text:#E8ECF1; --dim:#8A94A3; --accent:#8B5CF6; --green:#10B981;
+    --text:#E8ECF1; --dim:#9AA4B2; --accent:#8B5CF6; --green:#10B981;
     --red:#EF4444; --amber:#F59E0B; --radius:16px;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
@@ -97,7 +97,7 @@
   nav button{flex:1; padding:10px 0 12px; color:var(--dim); font-size:.7rem; display:flex;
     flex-direction:column; align-items:center; gap:3px;}
   nav button.active{color:var(--accent);}
-  nav .ico{font-size:1.25rem; line-height:1;}
+  nav .ico{width:22px; height:22px;}
 
   /* ---------- modals ---------- */
   .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:60;
@@ -275,8 +275,9 @@
       <h2>Data</h2>
       <div class="set-card">
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
+        <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 6 build (v8)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 7 build (v9)</div>
       </div>
     </section>
   </main>
@@ -284,10 +285,18 @@
   <button id="fab" title="Lançamento">+</button>
 
   <nav>
-    <button data-view="today" class="active"><span class="ico">☀️</span>Today</button>
-    <button data-view="trends"><span class="ico">📈</span>Trends</button>
-    <button data-view="finance"><span class="ico">💰</span>Finance</button>
-    <button data-view="settings"><span class="ico">⚙️</span>Settings</button>
+    <button data-view="today" class="active">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+      Today</button>
+    <button data-view="trends">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 14 21 5"/><polyline points="15 5 21 5 21 11"/></svg>
+      Trends</button>
+    <button data-view="finance">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+      Finance</button>
+    <button data-view="settings">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3"/><path d="M14 2v4M8 10v4M16 18v4"/></svg>
+      Settings</button>
   </nav>
 </div>
 
@@ -406,6 +415,9 @@
     border:1px solid var(--line); border-radius:12px; padding:10px 18px; font-size:.85rem;
     z-index:70; transition:opacity .3s; opacity:0; pointer-events:none; max-width:88vw; text-align:center;}
   #toast.show{opacity:1;}
+  #toast.actionable{pointer-events:auto;}
+  #toast .toast-act{color:var(--accent); font-weight:700; margin-left:14px; text-transform:uppercase;
+    font-size:.8rem; letter-spacing:.04em;}
 </style>
 
 <script>
@@ -441,13 +453,19 @@ async function apiGet(url, token) {
   return j;
 }
 
-/* POST as text/plain (string body) — avoids the CORS preflight Apps Script can't answer */
+/* POST as text/plain (string body) — avoids the CORS preflight Apps Script can't answer.
+   Session 7: API rejections (ok:false) are surfaced with their real error — they are NOT
+   "offline". Both cases keep the item in the queue so nothing is lost. */
 async function apiPost(action, data) {
   const { url, token } = cfg();
   try {
     const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action, payload: data }) });
     const j = await res.json();
-    if (!j.ok) throw new Error(j.error || 'API error');
+    if (!j.ok) {
+      pushQueue({ action, payload: data });
+      toast('⚠️ API rejected: ' + (j.error || 'unknown error') + ' — kept in queue');
+      return false;
+    }
     return true;
   } catch (e) {
     pushQueue({ action, payload: data });
@@ -466,15 +484,21 @@ async function flushQueue() {
   if (!q.length) return;
   const { url, token } = cfg();
   const remaining = [];
+  let fatal = '';
   for (const item of q) {
+    if (fatal) { remaining.push(item); continue; }   // auth/config error: stop hammering, keep the rest
     try {
       const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action:item.action, payload:item.payload }) });
       const j = await res.json();
-      if (!j.ok) throw new Error(j.error);
+      if (!j.ok) {
+        remaining.push(item);
+        if (/unauthorized|SECRET/i.test(String(j.error || ''))) fatal = j.error;
+      }
     } catch (e) { remaining.push(item); }
   }
   setQueue(remaining);
-  if (q.length && !remaining.length) toast('Queue synced ✓');
+  if (fatal) toast('⚠️ Queue blocked: ' + fatal);
+  else if (q.length && !remaining.length) toast('Queue synced ✓');
 }
 
 function renderQueueBadge() {
@@ -1206,6 +1230,7 @@ function syncInstVisibility() {
   $('#sp-inst-wrap').classList.toggle('hidden', spendMethod !== 'credit');
 }
 function openSpend() {
+  commitPendingTx();                     // a new Lançamento commits the previous one
   $('#sp-amount').value = ''; $('#sp-desc').value = '';
   spendCat = null;
   instSel.value = '1';
@@ -1233,20 +1258,53 @@ $('#sp-method').addEventListener('click', e => {
   document.querySelectorAll('#sp-method button').forEach(x => x.classList.toggle('on', x === b));
   syncInstVisibility();
 });
-$('#sp-save').addEventListener('click', async () => {
+/* Session 7: Undo — the API send is DELAYED 6s. Undo within the window rolls back the
+   local mirror and nothing ever reaches the Sheet. Backgrounding/closing the app
+   commits immediately, so a spend logged right before locking the phone is safe. */
+let pendingTx = null;   // { apiPayload, rows, spendPrev, timer }
+
+function commitPendingTx() {
+  if (!pendingTx) return;
+  const p = pendingTx; pendingTx = null;
+  clearTimeout(p.timer);
+  apiPost('add_transaction', p.apiPayload);
+}
+function undoPendingTx() {
+  if (!pendingTx) return;
+  const p = pendingTx; pendingTx = null;
+  clearTimeout(p.timer);
+  if (txs()) {
+    p.rows.forEach(r => { const i = txs().indexOf(r); if (i > -1) txs().splice(i, 1); });
+  }
+  localStorage.setItem(LS.spend, JSON.stringify(p.spendPrev));
+  if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
+  render();
+  toast('Lançamento undone ↩');
+}
+window.addEventListener('pagehide', commitPendingTx);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') commitPendingTx();
+});
+
+$('#sp-save').addEventListener('click', () => {
   const amt = Math.abs(Number($('#sp-amount').value) || 0);
   if (!amt) { toast('Enter an amount'); return; }
   if (!spendCat) { toast('Pick a category'); return; }
+  commitPendingTx();                       // only one undoable spend at a time
   const n = spendMethod === 'credit' ? (parseInt(instSel.value, 10) || 1) : 1;
   $('#spend-modal').classList.add('hidden');
   const desc = $('#sp-desc').value.trim();
 
   const isInvest = spendCat === 'Investments';   // investments never count toward varspend
+  const spendPrev = JSON.parse(localStorage.getItem(LS.spend) || '{}');
+  const rows = [];
+  const pushRow = r => { txs().push(r); rows.push(r); };
+
   if (n === 1) {
     if (!isInvest) addManualSpend(amt);      // fallback path (pre-Session 4 API)
     if (txs()) {                             // Session 4: instant local ledger update
-      txs().push({ date: todayISO(), description: desc, amount: -amt,
-                   category: spendCat, source: 'manual', method: spendMethod, review_flag: '' });
+      pushRow({ date: todayISO(), description: desc, amount: -amt,
+                category: spendCat, source: 'manual', method: spendMethod, review_flag: '' });
       localStorage.setItem(LS.cache, JSON.stringify(payload));
     }
   } else {                                   // installments: mirror the API's split locally
@@ -1254,7 +1312,7 @@ $('#sp-save').addEventListener('click', async () => {
     const dates = parcelaDates(n);
     if (!isInvest) addManualSpend(parts[0] / 100);  // only this cycle's parcela counts toward today
     if (txs()) {
-      parts.forEach((c, k) => txs().push({
+      parts.forEach((c, k) => pushRow({
         date: dates[k],
         description: (desc ? desc + ' ' : '') + '(parcela ' + (k + 1) + '/' + n + ')',
         amount: -c / 100,
@@ -1264,16 +1322,22 @@ $('#sp-save').addEventListener('click', async () => {
     }
   }
   render();
-  const ok = await apiPost('add_transaction', {
-    date: todayISO(),
-    description: desc,
-    amount: -amt,
-    category: spendCat,
-    source: 'manual',
-    method: spendMethod,
-    installments: n
-  });
-  if (ok) toast(money(amt) + (n > 1 ? ' em ' + n + 'x' : '') + ' · ' + spendCat + ' ✓');
+
+  pendingTx = {
+    apiPayload: {
+      date: todayISO(),
+      description: desc,
+      amount: -amt,
+      category: spendCat,
+      source: 'manual',
+      method: spendMethod,
+      installments: n
+    },
+    rows, spendPrev,
+    timer: setTimeout(commitPendingTx, 6000)
+  };
+  toast(money(amt) + (n > 1 ? ' em ' + n + 'x' : '') + ' · ' + spendCat + ' ✓',
+        { label: 'Undo', onAction: undoPendingTx, ms: 6000 });
 });
 
 /* ================= note ================= */
@@ -1304,9 +1368,23 @@ function showView(v) {
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
 
 let toastTimer;
-function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+/* toast(msg) or toast(msg, {label:'Undo', onAction:fn, ms:6000}) */
+function toast(msg, opts) {
+  const t = $('#toast');
+  t.textContent = msg;
+  if (opts && opts.label) {
+    const b = document.createElement('button');
+    b.className = 'toast-act';
+    b.textContent = opts.label;
+    b.addEventListener('click', () => { t.classList.remove('show'); opts.onAction(); });
+    t.appendChild(b);
+    t.classList.add('actionable');
+  } else {
+    t.classList.remove('actionable');
+  }
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), (opts && opts.ms) || 2200);
 }
 
 /* ================= settings: connection ================= */
@@ -1321,6 +1399,32 @@ $('#st-save').addEventListener('click', async () => {
   } catch (e) { toast('Failed: ' + e.message); }
 });
 $('#st-refresh').addEventListener('click', () => refresh(true));
+
+/* Session 7: pinpoints WHY saves are queueing — network vs URL vs token vs access. */
+$('#st-test').addEventListener('click', async () => {
+  const { url, token } = cfg();
+  const el = $('#st-info');
+  el.textContent = 'Testing…';
+  try {
+    const res = await fetch(url + '?token=' + encodeURIComponent(token));
+    const text = await res.text();
+    let j;
+    try { j = JSON.parse(text); }
+    catch (e) {
+      el.textContent = '✗ HTTP ' + res.status + ' — response is not JSON. Likely a wrong /exec URL (new deployment?) or access is not set to "Anyone".';
+      return;
+    }
+    if (j.ok) {
+      el.textContent = '✓ Connected — API healthy. Syncing queue…';
+      await flushQueue();
+      refresh(false);
+      if (!getQueue().length) el.textContent = '✓ Connected — queue fully synced.';
+    } else {
+      el.textContent = '✗ API says: ' + (j.error || 'unknown') +
+        (/unauthorized/i.test(String(j.error)) ? ' → the token in this app ≠ SECRET in Code.gs. Fix the SECRET line in Apps Script and deploy a new version.' : '');
+    }
+  } catch (e) { el.textContent = '✗ Network error: ' + e.message; }
+});
 
 /* ================= boot ================= */
 async function refresh(showToast) {
