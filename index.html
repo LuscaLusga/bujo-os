@@ -142,6 +142,7 @@
   .wk{background:var(--card); border-radius:12px; padding:12px 14px; margin-bottom:8px;}
   .wk .l{display:flex; justify-content:space-between; font-size:.85rem; margin-bottom:7px;}
   .wk .l .v{font-variant-numeric:tabular-nums; color:var(--dim);}
+  .wk.sel{box-shadow:0 0 0 1px var(--accent), 0 0 14px rgba(139,92,246,.4);}
   .bar{height:8px; background:var(--card2); border-radius:99px; overflow:hidden;}
   .bar>div{height:100%; border-radius:99px; transition:width .4s;}
   .stk{display:flex; justify-content:space-between; background:var(--card);
@@ -262,10 +263,6 @@
         <canvas id="fi-subchart"></canvas>
       </div>
       <div id="fi-subsum"></div>
-      <h2>Projection — this month</h2>
-      <div class="set-card" id="fi-proj"></div>
-      <h2>Anderson</h2>
-      <div class="set-card" id="fi-anderson"></div>
       <h2>Goals</h2>
       <div id="fi-goals"></div>
       <h2 id="fi-split-h">Investments — Renda Fixa / Variável</h2>
@@ -298,8 +295,6 @@
         <div class="mono" style="margin-top:6px;">Every goal with a salary_mult in the Goals tab follows this automatically (varcap 0.3 · investmonthly 0.1 · invest6x 6 · fixedcap 0.602…). Add salary_mult to any future goal and it joins in.</div>
         <label>Total invested today (R$) — refreshes invest10k + invest6x, as_of = today</label>
         <input id="inc-invest" type="number" inputmode="decimal" step="0.01" min="0" placeholder="leave blank to keep">
-        <label>Anderson arrears (R$)</label>
-        <input id="inc-arrears" type="number" inputmode="decimal" step="0.01" min="0" placeholder="leave blank to keep">
         <button class="btn-primary" id="inc-save">Save income & snapshots</button>
       </div>
 
@@ -314,7 +309,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 12 build (v14)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 13 build (v15)</div>
       </div>
     </section>
   </main>
@@ -564,6 +559,7 @@ let spendMethod = 'pix', spendCatSel = CAT_VAR, spendSub = null;
 let trRange = 7;
 let finMethod = 'all';
 let finWindow = '3', fiSubCat = 'Variable Spendings', fiSubChartRef = null, fiShowRecat = false;
+let fiSubSel = null;   // Session 13: subcategory tapped in the totals list → filters the tx list
 let chartRefs = [];
 
 const isoOf = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -1002,14 +998,6 @@ $('#tr-range').addEventListener('click', e => {
 const txs = () => (payload && payload.transactions) || null;   // null = API without Session 4 update
 const thisMonthKey = () => todayISO().slice(0,7);
 const txMonth = t => String(t.date).slice(0,7);
-function priorMonthKeys(n) {
-  const out = [];
-  for (let i = 1; i <= n; i++) {
-    const x = new Date(); x.setDate(1); x.setMonth(x.getMonth() - i);
-    out.push(isoOf(x).slice(0,7));
-  }
-  return out;
-}
 /* Session 10: 'yyyy-MM' keys for the explorer window, oldest → newest, incl. current month */
 function finWindowMonths() {
   const now = new Date();
@@ -1044,12 +1032,6 @@ function dailyCatMap(cat) {
 }
 /* derived KPIs read the ledger instead of KPI_Log */
 const derivedCatOf = o => o.kpi_id === 'varspend' ? CAT_VAR : o.kpi_id === 'fixedcosts' ? CAT_FIXED : null;
-const recurringRows = () => (payload && payload.recurring) || [];
-function recActive(r, mk) {
-  const s = r.start ? String(r.start).slice(0,7) : '';
-  const e = r.end ? String(r.end).slice(0,7) : '';
-  return (!s || s <= mk) && (!e || e >= mk);
-}
 const goalRow = id => ((payload && payload.goals) || []).find(g => g.goal_id === id);
 /* Session 10: salary lives in Goals (goal_id=salary, current=value). Goals with a
    salary_mult get their target computed live from it — one edit updates them all. */
@@ -1062,9 +1044,6 @@ function goalTarget(g) {
   const s = salaryVal();
   return (m && s) ? m * s : (Number(g.target) || 0);
 }
-const signed = v => (v < 0 ? '−' : '') + money(Math.abs(v));
-const projLine = (label, v) => '<div class="pline"><span>' + label + '</span><span>' + signed(v) + '</span></div>';
-
 function barRow(name, valueText, pct, color) {
   const div = document.createElement('div');
   div.className = 'wk';
@@ -1081,7 +1060,6 @@ function renderFinance() {
   if (!txs()) { $('#fi-guard').classList.remove('hidden'); return; }
   $('#fi-guard').classList.add('hidden');
   const mk = thisMonthKey();
-  const prior = priorMonthKeys(3);
   const rows = txs().filter(t => finMethod === 'all' || t.method === finMethod);
   const mtdRows = rows.filter(t => txMonth(t) === mk);
 
@@ -1154,7 +1132,7 @@ function renderFinance() {
     const b = document.createElement('button');
     b.textContent = c === CAT_VAR ? 'Variable' : c === CAT_FIXED ? 'Fixed' : 'Investment';
     b.classList.toggle('on', fiSubCat === c);
-    b.addEventListener('click', () => { fiSubCat = c; renderFinance(); });
+    b.addEventListener('click', () => { fiSubCat = c; fiSubSel = null; renderFinance(); });
     fbox.appendChild(b);
   });
   const subRowsW = winRows.filter(t => txCat(t).cat === fiSubCat);
@@ -1192,36 +1170,19 @@ function renderFinance() {
   const totals = subNames.map(s => [s, series[s].reduce((a,b) => a + b, 0)])
     .filter(x => x[1] > 0).sort((a,b) => b[1] - a[1]);
   if (!totals.length) ssum.innerHTML = '<div class="empty">No ' + fiSubCat + ' spending in this window.</div>';
+  if (fiSubSel && !totals.some(x => x[0] === fiSubSel)) fiSubSel = null;   // stale selection
   const maxS = totals.length ? totals[0][1] : 1;
-  totals.forEach(x => ssum.appendChild(
-    barRow(x[0], money(x[1]) + ' · avg ' + money(x[1] / mCount) + '/mo', x[1] / maxS, 'var(--accent)')));
+  totals.forEach(x => {
+    /* Session 13: tap a subcategory row → glow + filter This month's transactions; tap again to clear */
+    const row = barRow(x[0], money(x[1]) + ' · avg ' + money(x[1] / mCount) + '/mo', x[1] / maxS, 'var(--accent)');
+    row.classList.toggle('sel', fiSubSel === x[0]);
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', () => { fiSubSel = fiSubSel === x[0] ? null : x[0]; renderFinance(); });
+    ssum.appendChild(row);
+  });
 
-  /* projection card (same math as the Projection tab) —
-     Session 10: income = salary goal when set (editable in Settings), else Recurring */
-  const act = recurringRows().filter(r => recActive(r, mk));
-  const inc = salaryVal() || act.reduce((s,r) => s + (Number(r.amount) > 0 ? Number(r.amount) : 0), 0);
-  const fx  = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && !r.end ? a : 0); }, 0);
-  const ins = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && r.end ? a : 0); }, 0);
-  const varEst = -spendSum(txs().filter(t => prior.includes(txMonth(t)) && txCat(t).cat === CAT_VAR)) / 3;
-  $('#fi-proj').innerHTML =
-    projLine('Income', inc) + projLine('Fixed', fx) + projLine('Installments', ins) +
-    projLine('Variable (3m avg)', varEst) +
-    '<div class="pline net"><span>Projected net</span><span>' + signed(inc + fx + ins + varEst) + '</span></div>';
-
-  /* Anderson card */
-  const fat = spendSum(txs().filter(t => txMonth(t) === mk && t.method === 'credit'));
-  const internetRow = recurringRows().find(r => /internet/i.test(String(r.name)));
-  const energyRow = recurringRows().find(r => /energ/i.test(String(r.name)));
-  const internet = internetRow ? Math.abs(Number(internetRow.amount) || 0) : 0;
-  const energy = energyRow ? Math.abs(Number(energyRow.amount) || 0) : 0;
-  const arrears = Number((goalRow('andersonarrears') || {}).current) || 0;
-  $('#fi-anderson').innerHTML =
-    projLine('CC fatura (building)', -fat) + projLine('Internet', -internet) +
-    (energy ? projLine('Energy', -energy) : '<div class="pline"><span>Energy</span><span style="color:var(--dim)">pending</span></div>') +
-    projLine('Arrears', -arrears) +
-    '<div class="pline net"><span>Total owed</span><span>' + signed(-(fat + internet + energy + arrears)) + '</span></div>';
-
-  /* goals: R$ + %, invest10k first; monthly caps computed live */
+  /* goals: R$ + %, invest10k first; monthly caps computed live
+     (Projection + Anderson cards removed in Session 13) */
   const gbox = $('#fi-goals'); gbox.innerHTML = '';
   const gl = ((payload && payload.goals) || []).filter(g =>
     g.goal_id !== 'andersonarrears' && g.goal_id !== 'rfsplit' && g.goal_id !== 'salary');
@@ -1282,10 +1243,21 @@ function renderFinance() {
       (splitAsOf || '—') + (untagged ? ' · ' + money(untagged) + ' untagged since (edit subcategory in the Sheet)' : '') + '</div>');
   }
 
-  /* transaction list for the selected method — tap a row to edit/delete (Session 9) */
+  /* transaction list for the selected method — tap a row to edit/delete (Session 9);
+     Session 13: honors the subcategory selected in the totals list above */
   const tbox = $('#fi-txs'); tbox.innerHTML = '';
-  const list = mtdRows.slice().sort((a,b) => String(b.date).localeCompare(String(a.date)));
-  if (!list.length) tbox.innerHTML = '<div class="empty">No transactions this month.</div>';
+  const list = mtdRows
+    .filter(t => !fiSubSel || (txCat(t).sub || '—') === fiSubSel)
+    .sort((a,b) => String(b.date).localeCompare(String(a.date)));
+  if (fiSubSel) {
+    const hint = document.createElement('button');
+    hint.className = 'cal-done-link';
+    hint.textContent = 'Filtered: ' + fiSubSel + ' — tap to clear';
+    hint.addEventListener('click', () => { fiSubSel = null; renderFinance(); });
+    tbox.appendChild(hint);
+  }
+  if (!list.length) tbox.insertAdjacentHTML('beforeend', '<div class="empty">' +
+    (fiSubSel ? 'No ' + fiSubSel + ' transactions this month.' : 'No transactions this month.') + '</div>');
   for (const t of list) {
     const a = Number(t.amount) || 0;
     const div = document.createElement('button');
@@ -1478,7 +1450,6 @@ function renderSettings() {
 $('#inc-save').addEventListener('click', async () => {
   const s = Number($('#inc-salary').value) || 0;
   const inv = $('#inc-invest').value === '' ? null : Math.abs(Number($('#inc-invest').value) || 0);
-  const arr = $('#inc-arrears').value === '' ? null : Math.abs(Number($('#inc-arrears').value) || 0);
   const goals = (payload && payload.goals) || [];
   const upsertLocal = (id, patch) => {
     let g = goals.find(x => x.goal_id === id);
@@ -1496,13 +1467,9 @@ $('#inc-save').addEventListener('click', async () => {
     jobs.push(apiPost('update_goal', { goal_id: 'invest10k', current: inv, as_of: todayISO() }));
     jobs.push(apiPost('update_goal', { goal_id: 'invest6x', current: inv, as_of: todayISO() }));
   }
-  if (arr !== null) {
-    upsertLocal('andersonarrears', { current: arr });
-    jobs.push(apiPost('update_goal', { goal_id: 'andersonarrears', current: arr }));
-  }
   if (!jobs.length) { toast('Nothing changed'); return; }
   if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
-  $('#inc-invest').value = ''; $('#inc-arrears').value = '';
+  $('#inc-invest').value = '';
   render();
   if ((await Promise.all(jobs)).every(Boolean)) toast('Income & snapshots saved ✓');
 });
