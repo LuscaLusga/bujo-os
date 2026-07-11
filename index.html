@@ -314,7 +314,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 11 build (v13)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 12 build (v14)</div>
       </div>
     </section>
   </main>
@@ -586,19 +586,20 @@ async function apiGet(url, token) {
 /* POST as text/plain (string body) — avoids the CORS preflight Apps Script can't answer.
    Session 7: API rejections (ok:false) are surfaced with their real error — they are NOT
    "offline". Both cases keep the item in the queue so nothing is lost. */
-async function apiPost(action, data) {
+async function apiPost(action, data, opts) {
   const { url, token } = cfg();
-  try {
+  const noQ = !!(opts && opts.noQueueOnReject);   // Session 12: edits/deletes that the API
+  try {                                            // rejects would fail forever — don't queue them
     const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action, payload: data }) });
     const j = await res.json();
     if (!j.ok) {
-      pushQueue({ action, payload: data });
-      toast('⚠️ API rejected: ' + (j.error || 'unknown error') + ' — kept in queue');
+      if (!noQ) pushQueue({ action, payload: data });
+      toast('⚠️ API rejected: ' + (j.error || 'unknown error') + (noQ ? '' : ' — kept in queue'));
       return false;
     }
     return true;
   } catch (e) {
-    pushQueue({ action, payload: data });
+    pushQueue({ action, payload: data });          // real offline: queueing is always safe
     toast('Offline — saved to queue ✓');
     return false;
   }
@@ -1374,7 +1375,8 @@ $('#tx-save').addEventListener('click', async () => {
   Object.assign(currentTx, set);
   if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
   render();
-  if (await apiPost('update_transaction', { match, set })) toast('Transaction updated ✓');
+  if (await apiPost('update_transaction', { match, set }, { noQueueOnReject: true })) toast('Transaction updated ✓');
+  else refresh(false);                      // rejected: resync so local view matches the Sheet
 });
 
 $('#tx-delete').addEventListener('click', async () => {
@@ -1391,7 +1393,8 @@ $('#tx-delete').addEventListener('click', async () => {
   }
   if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
   render();
-  if (await apiPost('delete_transaction', { match })) toast('Transaction deleted ✓');
+  if (await apiPost('delete_transaction', { match }, { noQueueOnReject: true })) toast('Transaction deleted ✓');
+  else refresh(false);                      // rejected: resync so local view matches the Sheet
 });
 
 $('#fi-method').addEventListener('click', e => {
