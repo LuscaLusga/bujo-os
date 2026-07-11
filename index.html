@@ -56,12 +56,16 @@
     align-items:baseline; width:100%; text-align:left;}
   .event .time{color:var(--accent); font-variant-numeric:tabular-nums; font-size:.85rem; min-width:76px;}
   .event .title{font-size:.95rem; flex:1;}
-  .event .chk{width:20px; height:20px; border:2px solid var(--line); border-radius:50%;
+  .event .chk{width:26px; height:26px; border:2px solid var(--line); border-radius:50%;
     flex:none; align-self:center; display:flex; align-items:center; justify-content:center;
-    font-size:.7rem; color:transparent;}
-  .event.done{opacity:.5;}
+    font-size:.75rem; color:var(--dim); padding:0;}
+  .event .chk.ok:active{border-color:var(--green); color:var(--green);}
+  .event .chk.x:active{border-color:var(--red); color:var(--red);}
+  .event.done, .event.skipped{opacity:.5;}
   .event.done .title{text-decoration:line-through;}
-  .event.done .chk{background:var(--green); border-color:var(--green); color:#fff;}
+  .event.done .st{background:var(--green); border-color:var(--green); color:#fff;}
+  .event.skipped .title{text-decoration:line-through; color:var(--red);}
+  .event.skipped .st{background:var(--red); border-color:var(--red); color:#fff;}
   .cal-done-link{color:var(--dim); font-size:.8rem; padding:8px 2px; text-align:left;}
   .empty{color:var(--dim); font-size:.9rem; padding:8px 2px;}
 
@@ -249,6 +253,8 @@
       <div class="set-card" id="fi-anderson"></div>
       <h2>Goals</h2>
       <div id="fi-goals"></div>
+      <h2 id="fi-split-h">Investments — Renda Fixa / Variável</h2>
+      <div class="set-card" id="fi-split"></div>
       <h2>This month’s transactions</h2>
       <div id="fi-txs"></div>
     </section>
@@ -266,6 +272,10 @@
       <div class="set-card" id="bk-queue"></div>
       <button class="btn-primary" id="bk-add" style="margin-top:0;">+ Add book</button>
 
+      <h2>Subscriptions</h2>
+      <div class="set-card" id="sub-list"></div>
+      <button class="btn-primary" id="sub-add" style="margin-top:0;">+ Add subscription</button>
+
       <h2>Connection</h2>
       <div class="set-card">
         <label>API URL</label><input id="st-url" type="url">
@@ -277,7 +287,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 7 build (v9)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 8 build (v10)</div>
       </div>
     </section>
   </main>
@@ -326,7 +336,7 @@
 <div class="overlay hidden" id="spend-modal">
   <div class="sheet">
     <h3>Lançamento</h3>
-    <div class="sub">Lands in Transactions as source=manual. Investments feed the invest goal, not Variable Spendings.</div>
+    <div class="sub">Lands in Transactions as source=manual. Investment feeds the invest goals, not Variable Spendings.</div>
     <label>Amount (R$)</label>
     <input id="sp-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00">
     <div class="seg" id="sp-method">
@@ -338,6 +348,12 @@
       <select id="sp-inst"></select>
     </div>
     <label>Category</label>
+    <div class="seg" id="sp-cat">
+      <button data-c="Variable Spendings" class="on">Variable</button>
+      <button data-c="Fixed Costs">Fixed</button>
+      <button data-c="Investment">Invest</button>
+    </div>
+    <label>Subcategory</label>
     <div class="chips" id="sp-cats"></div>
     <label>Description (optional)</label>
     <input id="sp-desc" type="text" placeholder="e.g. bakery">
@@ -408,6 +424,29 @@
   </div>
 </div>
 
+<!-- ============ SUBSCRIPTION MODAL ============ -->
+<div class="overlay hidden" id="sub-modal">
+  <div class="sheet">
+    <h3 id="sub-title">Subscription</h3>
+    <div class="sub">ACTIVE subs auto-post to Transactions monthly on their billing day (Variable Spendings · Subscriptions) — no manual input.</div>
+    <label>Name</label>
+    <input id="sub-name" type="text" placeholder="e.g. Spotify">
+    <div class="cols">
+      <div><label>Amount (R$)</label><input id="sub-amount" type="number" inputmode="decimal" step="0.01" min="0"></div>
+      <div><label>Billing day (1–28)</label><input id="sub-day" type="number" inputmode="numeric" min="1" max="28"></div>
+    </div>
+    <div class="seg" id="sub-method" style="margin-top:14px;">
+      <button data-m="credit" class="on">Credit card</button>
+      <button data-m="pix">PIX</button>
+    </div>
+    <div class="check"><input id="sub-active" type="checkbox" checked><label style="margin:0;">ACTIVE — auto-posts every month</label></div>
+    <div class="row2">
+      <button class="btn-ghost" data-close>Cancel</button>
+      <button class="btn-go" id="sub-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 <style>
   #toast{position:fixed; left:50%; transform:translateX(-50%);
@@ -423,15 +462,36 @@
 <script>
 'use strict';
 /* ================= constants / storage ================= */
-const DISCRETIONARY = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Transportation','Other'];
-const FIXED_CATS = ['Father - CC & Bills','Donations & Charity','Health & Insurance','Education'];
+/* Session 8: 3-level category scheme — category + subcategory columns in Transactions. */
+const CAT_VAR = 'Variable Spendings', CAT_FIXED = 'Fixed Costs', CAT_INVEST = 'Investment';
+const SUBCATS = {};
+SUBCATS[CAT_VAR]    = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Transportation','Subscriptions','Other'];
+SUBCATS[CAT_FIXED]  = ['Conta de Internet','Conta de Luz','Dízimo','Conta de Água','Health & Insurance','Education'];
+SUBCATS[CAT_INVEST] = ['Renda Fixa','Renda Variável'];
+/* legacy (pre-migration) category → [category, subcategory] */
+const LEGACY_MAP = {
+  'Food & Dining':[CAT_VAR,'Food & Dining'], 'Groceries':[CAT_VAR,'Groceries'],
+  'Entertainment':[CAT_VAR,'Entertainment'], 'Shopping':[CAT_VAR,'Shopping'],
+  'Pet':[CAT_VAR,'Pet'], 'Transportation':[CAT_VAR,'Transportation'],
+  'Subscriptions':[CAT_VAR,'Subscriptions'], 'Other':[CAT_VAR,'Other'],
+  'Investments':[CAT_INVEST,''],
+  'Donations & Charity':[CAT_FIXED,'Dízimo'], 'Health & Insurance':[CAT_FIXED,'Health & Insurance'],
+  'Education':[CAT_FIXED,'Education'], 'Father - CC & Bills':[CAT_FIXED,'Father - CC & Bills']
+};
+/* normalized {cat, sub} for any transaction, migrated or not */
+function txCat(t) {
+  const c = String(t.category || '').trim();
+  if (c === CAT_VAR || c === CAT_FIXED || c === CAT_INVEST) return { cat: c, sub: String(t.subcategory || '').trim() };
+  const m = LEGACY_MAP[c];
+  return m ? { cat: m[0], sub: m[1] } : { cat: c, sub: String(t.subcategory || '').trim() };
+}
 const LS = { url:'bujo_api_url', token:'bujo_token', queue:'bujo_queue', cache:'bujo_cache', spend:'bujo_manual_spend', caldone:'bujo_cal_done' };
 const $ = s => document.querySelector(s);
 const money = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 
 let payload = null;
 let currentKpi = null, currentBook = null, editingNewObjective = false;
-let spendMethod = 'pix', spendCat = null;
+let spendMethod = 'pix', spendCatSel = CAT_VAR, spendSub = null;
 let trRange = 7;
 let finMethod = 'all';
 let chartRefs = [];
@@ -598,23 +658,32 @@ function render() {
   $('#st-info').textContent = payload ? ('Last sync: ' + (payload.generated_at || '—')) : 'No data yet';
 }
 
-/* Done-toggle is VIEW-ONLY: stored on this device (localStorage), resets each day,
-   never writes to Google Calendar. */
+/* Done/skipped toggles are VIEW-ONLY: stored on this device (localStorage), reset each
+   day, never write to Google Calendar. ✓ = executed · ✕ = not done / canceled today. */
 let calShowDone = false;
-function calDoneKeys() {
+function calMarks() {
   const s = JSON.parse(localStorage.getItem(LS.caldone) || '{}');
-  return s.date === todayISO() ? (s.keys || []) : [];
+  if (s.date !== todayISO()) return { done: [], skipped: [] };
+  return { done: s.done || s.keys || [], skipped: s.skipped || [] };   // s.keys = pre-v10 format
 }
-function setCalDoneKeys(keys) {
-  localStorage.setItem(LS.caldone, JSON.stringify({ date: todayISO(), keys }));
+function setCalMarks(m) {
+  localStorage.setItem(LS.caldone, JSON.stringify({ date: todayISO(), done: m.done, skipped: m.skipped }));
 }
 const evKey = e => (e.all_day ? 'allday' : String(e.start)) + '|' + e.title;
-function toggleEventDone(e) {
-  const k = evKey(e);
-  let keys = calDoneKeys();
-  keys = keys.includes(k) ? keys.filter(x => x !== k) : keys.concat(k);
-  setCalDoneKeys(keys);
-  if (!keys.length) calShowDone = false;
+function markEvent(e, kind) {              // kind: 'done' | 'skipped'
+  const k = evKey(e), m = calMarks();
+  m.done = m.done.filter(x => x !== k);
+  m.skipped = m.skipped.filter(x => x !== k);
+  m[kind].push(k);
+  setCalMarks(m);
+  renderCalendar();
+}
+function unmarkEvent(e) {
+  const k = evKey(e), m = calMarks();
+  m.done = m.done.filter(x => x !== k);
+  m.skipped = m.skipped.filter(x => x !== k);
+  setCalMarks(m);
+  if (!m.done.length && !m.skipped.length) calShowDone = false;
   renderCalendar();
 }
 
@@ -625,31 +694,43 @@ function renderCalendar() {
     .sort((a,b) => (a.all_day ? '' : a.start).localeCompare(b.all_day ? '' : b.start));
   if (!evs.length) { box.innerHTML = '<div class="empty">No events today.</div>'; return; }
 
-  const doneKeys = calDoneKeys();
-  const pending = evs.filter(e => !doneKeys.includes(evKey(e)));
-  const done = evs.filter(e => doneKeys.includes(evKey(e)));
+  const m = calMarks();
+  const markOf = e => m.done.includes(evKey(e)) ? 'done' : m.skipped.includes(evKey(e)) ? 'skipped' : '';
+  const pending = evs.filter(e => !markOf(e));
+  const marked = evs.filter(e => markOf(e));
 
-  const makeRow = (e, isDone) => {
+  const makeRow = (e, mark) => {
     const t = e.all_day ? 'All day' : e.start.slice(11,16) + '–' + e.end.slice(11,16);
-    const btn = document.createElement('button');
-    btn.className = 'event' + (isDone ? ' done' : '');
-    btn.innerHTML = '<span class="time"></span><span class="title"></span><span class="chk">✓</span>';
-    btn.querySelector('.time').textContent = t;
-    btn.querySelector('.title').textContent = e.title;
-    btn.addEventListener('click', () => toggleEventDone(e));
-    box.appendChild(btn);
+    const div = document.createElement('div');
+    div.className = 'event' + (mark ? ' ' + mark : '');
+    div.innerHTML = '<span class="time"></span><span class="title"></span>' +
+      (mark ? '<span class="chk st"></span>'
+            : '<button class="chk x" title="Not done / canceled">✕</button><button class="chk ok" title="Done">✓</button>');
+    div.querySelector('.time').textContent = t;
+    div.querySelector('.title').textContent = e.title;
+    if (mark) {
+      div.querySelector('.st').textContent = mark === 'done' ? '✓' : '✕';
+      div.style.cursor = 'pointer';
+      div.addEventListener('click', () => unmarkEvent(e));           // tap to restore
+    } else {
+      div.querySelector('.chk.x').addEventListener('click', () => markEvent(e, 'skipped'));
+      div.querySelector('.chk.ok').addEventListener('click', () => markEvent(e, 'done'));
+    }
+    box.appendChild(div);
   };
 
-  pending.forEach(e => makeRow(e, false));
-  if (!pending.length) box.innerHTML = '<div class="empty">All done for today 🎉</div>';
+  pending.forEach(e => makeRow(e, ''));
+  if (!pending.length) box.innerHTML = '<div class="empty">All handled for today 🎉</div>';
 
-  if (done.length) {
+  if (marked.length) {
+    const nd = m.done.length, ns = m.skipped.length;
     const link = document.createElement('button');
     link.className = 'cal-done-link';
-    link.textContent = calShowDone ? 'Hide done' : 'Done (' + done.length + ') — show';
+    link.textContent = calShowDone ? 'Hide'
+      : (nd ? nd + ' done' : '') + (nd && ns ? ' · ' : '') + (ns ? ns + ' skipped' : '') + ' — show';
     link.addEventListener('click', () => { calShowDone = !calShowDone; renderCalendar(); });
     box.appendChild(link);
-    if (calShowDone) done.forEach(e => makeRow(e, true));
+    if (calShowDone) marked.forEach(e => makeRow(e, markOf(e)));
   }
 }
 
@@ -853,12 +934,12 @@ function spendSum(rows) { return rows.reduce((s,t) => s + (Number(t.amount) < 0 
 function varspendMTD() {
   if (!txs()) return null;
   const mk = thisMonthKey();
-  return spendSum(txs().filter(t => txMonth(t) === mk && DISCRETIONARY.includes(t.category)));
+  return spendSum(txs().filter(t => txMonth(t) === mk && txCat(t).cat === CAT_VAR));
 }
 function dailySpendMap() {
   const m = {};
   (txs() || []).forEach(t => {
-    if (Number(t.amount) < 0 && DISCRETIONARY.includes(t.category)) {
+    if (Number(t.amount) < 0 && txCat(t).cat === CAT_VAR) {
       const d = String(t.date);
       m[d] = (m[d] || 0) + (-Number(t.amount));
     }
@@ -902,9 +983,10 @@ function renderFinance() {
   /* categories: MTD vs trailing-3-month average */
   const cbox = $('#fi-cats'); cbox.innerHTML = '';
   const mtdCat = {}, avgCat = {};
-  mtdRows.forEach(t => { if (Number(t.amount) < 0) mtdCat[t.category] = (mtdCat[t.category] || 0) + (-Number(t.amount)); });
+  const catKey = t => { const c = txCat(t); return c.sub || c.cat || 'Uncategorized'; };
+  mtdRows.forEach(t => { if (Number(t.amount) < 0) mtdCat[catKey(t)] = (mtdCat[catKey(t)] || 0) + (-Number(t.amount)); });
   rows.filter(t => prior.includes(txMonth(t))).forEach(t => {
-    if (Number(t.amount) < 0) avgCat[t.category] = (avgCat[t.category] || 0) + (-Number(t.amount));
+    if (Number(t.amount) < 0) avgCat[catKey(t)] = (avgCat[catKey(t)] || 0) + (-Number(t.amount));
   });
   Object.keys(avgCat).forEach(k => avgCat[k] /= 3);
   const names = [...new Set([...Object.keys(mtdCat), ...Object.keys(avgCat)])]
@@ -922,7 +1004,7 @@ function renderFinance() {
   const inc = act.reduce((s,r) => s + (Number(r.amount) > 0 ? Number(r.amount) : 0), 0);
   const fx  = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && !r.end ? a : 0); }, 0);
   const ins = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && r.end ? a : 0); }, 0);
-  const varEst = -spendSum(txs().filter(t => prior.includes(txMonth(t)) && DISCRETIONARY.includes(t.category))) / 3;
+  const varEst = -spendSum(txs().filter(t => prior.includes(txMonth(t)) && txCat(t).cat === CAT_VAR)) / 3;
   $('#fi-proj').innerHTML =
     projLine('Income', inc) + projLine('Fixed', fx) + projLine('Installments', ins) +
     projLine('Variable (3m avg)', varEst) +
@@ -943,25 +1025,60 @@ function renderFinance() {
 
   /* goals: R$ + %, invest10k first; monthly caps computed live */
   const gbox = $('#fi-goals'); gbox.innerHTML = '';
-  const gl = ((payload && payload.goals) || []).filter(g => g.goal_id !== 'andersonarrears');
+  const gl = ((payload && payload.goals) || []).filter(g => g.goal_id !== 'andersonarrears' && g.goal_id !== 'rfsplit');
   gl.sort((a,b) => (a.goal_id === 'invest10k' ? -1 : b.goal_id === 'invest10k' ? 1 : 0));
   for (const g of gl) {
     let cur = Number(g.current) || 0;
     const tgt = Number(g.target) || 0;
     const isCap = g.goal_id === 'varcap' || g.goal_id === 'fixedcap';
-    if (g.goal_id === 'investmonthly') cur = spendSum(txs().filter(t => txMonth(t) === mk && t.category === 'Investments'));
+    if (g.goal_id === 'investmonthly') cur = spendSum(txs().filter(t => txMonth(t) === mk && txCat(t).cat === CAT_INVEST));
     /* invest10k / invest6x: current = manual snapshot (as of Goals.as_of) + contributions logged since.
        Refresh current AND as_of together at the monthly ritual so nothing double-counts. */
     if (g.goal_id === 'invest10k' || g.goal_id === 'invest6x') {
       const asOf = String(g.as_of || '').slice(0, 10);
-      if (asOf && txs()) cur += spendSum(txs().filter(t => t.category === 'Investments' && String(t.date) > asOf));
+      if (asOf && txs()) cur += spendSum(txs().filter(t => txCat(t).cat === CAT_INVEST && String(t.date) > asOf));
     }
     if (g.goal_id === 'varcap') cur = varspendMTD() || 0;
-    if (g.goal_id === 'fixedcap') cur = spendSum(txs().filter(t => txMonth(t) === mk && FIXED_CATS.includes(t.category)));
+    if (g.goal_id === 'fixedcap') cur = spendSum(txs().filter(t => txMonth(t) === mk && txCat(t).cat === CAT_FIXED));
     const pct = tgt ? cur / tgt : 0;
     const over = isCap && tgt && cur > tgt;
     gbox.appendChild(barRow(g.name, money(cur) + ' / ' + money(tgt) + ' (' + Math.round(pct * 100) + '%)',
       pct, over ? 'var(--red)' : (isCap ? 'var(--amber)' : 'var(--green)')));
+  }
+
+  /* Session 8: RF/RV split — snapshot % (Goals row rfsplit: current=RF%, as_of=snapshot date)
+     applied to the invest total at that date, then moved live by tagged Investment lançamentos. */
+  const splitG = goalRow('rfsplit');
+  $('#fi-split-h').classList.toggle('hidden', !splitG);
+  $('#fi-split').classList.toggle('hidden', !splitG);
+  if (splitG) {
+    const rfPct = Number(splitG.current) || 0;                       // e.g. 45.70
+    const splitAsOf = String(splitG.as_of || '').slice(0, 10);
+    const g10 = goalRow('invest10k') || {};
+    let base = Number(g10.current) || 0;
+    const g10AsOf = String(g10.as_of || '').slice(0, 10);
+    if (g10AsOf && splitAsOf > g10AsOf) {
+      base += spendSum(txs().filter(t => txCat(t).cat === CAT_INVEST &&
+        String(t.date) > g10AsOf && String(t.date) <= splitAsOf));
+    }
+    let rf = base * rfPct / 100, rv = base * (100 - rfPct) / 100, untagged = 0;
+    txs().forEach(t => {
+      if (txCat(t).cat !== CAT_INVEST || String(t.date) <= splitAsOf) return;
+      const a = Number(t.amount) < 0 ? -Number(t.amount) : 0;
+      if (!a) return;
+      const s = txCat(t).sub;
+      if (s === 'Renda Fixa') rf += a;
+      else if (s === 'Renda Variável') rv += a;
+      else untagged += a;
+    });
+    const totInv = rf + rv;
+    const sbox = $('#fi-split'); sbox.innerHTML = '';
+    sbox.appendChild(barRow('Renda Fixa', money(rf) + ' (' + (totInv ? Math.round(rf / totInv * 1000) / 10 : 0) + '%)',
+      totInv ? rf / totInv : 0, 'var(--green)'));
+    sbox.appendChild(barRow('Renda Variável', money(rv) + ' (' + (totInv ? Math.round(rv / totInv * 1000) / 10 : 0) + '%)',
+      totInv ? rv / totInv : 0, 'var(--accent)'));
+    sbox.insertAdjacentHTML('beforeend', '<div class="mono" style="margin-top:4px;">Snapshot ' +
+      (splitAsOf || '—') + (untagged ? ' · ' + money(untagged) + ' untagged since (edit subcategory in the Sheet)' : '') + '</div>');
   }
 
   /* transaction list for the selected method */
@@ -973,9 +1090,10 @@ function renderFinance() {
     const div = document.createElement('div');
     div.className = 'txr';
     div.innerHTML = '<div class="m"><div class="n"></div><div class="d"></div></div><div class="a"></div>';
-    div.querySelector('.n').textContent = t.description || t.category;
+    const tc = txCat(t);
+    div.querySelector('.n').textContent = t.description || tc.sub || tc.cat;
     div.querySelector('.d').textContent = String(t.date).slice(8,10) + '/' + String(t.date).slice(5,7) +
-      ' · ' + t.category + (t.source === 'manual' ? ' · manual' : '');
+      ' · ' + (tc.sub || tc.cat) + (t.source === 'manual' ? ' · manual' : t.source === 'auto' ? ' · auto' : '');
     const av = div.querySelector('.a');
     av.textContent = (a >= 0 ? '+' : '−') + money(Math.abs(a));
     if (a > 0) av.classList.add('pos');
@@ -1031,7 +1149,74 @@ function renderSettings() {
     row.addEventListener('click', () => openBookModal(b));
     bq.appendChild(row);
   }
+
+  /* subscriptions */
+  const sl = $('#sub-list'); sl.innerHTML = '';
+  const subs = (payload && payload.subscriptions) || [];
+  if (!subs.length) sl.innerHTML = '<div class="empty">No subscriptions yet. ACTIVE ones auto-post monthly (needs the Session 8 Code.gs + trigger).</div>';
+  for (const s of subs) {
+    const on = String(s.status || '').toUpperCase() === 'ACTIVE';
+    const row = document.createElement('button');
+    row.className = 'ob-row' + (on ? '' : ' off');
+    row.innerHTML = '<span class="m"><div class="n"></div><div class="d"></div></span><span>✏️</span>';
+    row.querySelector('.n').textContent = s.name + (on ? '' : ' (inactive)');
+    row.querySelector('.d').textContent = money(s.amount) + ' · day ' + (s.billing_day || '?') +
+      ' · ' + (s.method || 'credit') + (s.last_posted ? ' · last ' + String(s.last_posted).slice(0, 10) : '');
+    row.addEventListener('click', () => openSubModal(s));
+    sl.appendChild(row);
+  }
 }
+
+/* ---------- subscription modal ---------- */
+let currentSub = null, subMethodSel = 'credit';
+function setSubMethodSeg(m) {
+  subMethodSel = m;
+  document.querySelectorAll('#sub-method button').forEach(x => x.classList.toggle('on', x.dataset.m === m));
+}
+$('#sub-method').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  setSubMethodSeg(b.dataset.m);
+});
+function openSubModal(s) {            // s = null → new subscription
+  currentSub = s;
+  $('#sub-title').textContent = s ? 'Edit subscription' : 'New subscription';
+  $('#sub-name').value = s ? s.name : '';
+  $('#sub-amount').value = s ? (Number(s.amount) || '') : '';
+  $('#sub-day').value = s ? (Number(s.billing_day) || '') : '';
+  setSubMethodSeg(s && s.method === 'pix' ? 'pix' : 'credit');
+  $('#sub-active').checked = s ? String(s.status || '').toUpperCase() === 'ACTIVE' : true;
+  $('#sub-modal').classList.remove('hidden');
+  if (!s) setTimeout(() => $('#sub-name').focus(), 150);
+}
+$('#sub-add').addEventListener('click', () => openSubModal(null));
+$('#sub-save').addEventListener('click', async () => {
+  const name = $('#sub-name').value.trim();
+  if (!name) { toast('Name is required'); return; }
+  const amount = Math.abs(Number($('#sub-amount').value) || 0);
+  if (!amount) { toast('Enter an amount'); return; }
+  const day = Math.min(Math.max(parseInt($('#sub-day').value, 10) || 1, 1), 28);
+  const isNew = !currentSub;
+  const subsArr = (payload && payload.subscriptions) || [];
+  if (isNew && subsArr.some(s => String(s.name).trim().toLowerCase() === name.toLowerCase())) {
+    toast('A subscription with this name already exists'); return;
+  }
+  const p = {
+    name: isNew ? name : currentSub.name,
+    amount: amount,
+    billing_day: day,
+    method: subMethodSel,
+    status: $('#sub-active').checked ? 'ACTIVE' : 'INACTIVE'
+  };
+  if (!isNew && name !== currentSub.name) p.new_name = name;
+  $('#sub-modal').classList.add('hidden');
+  if (payload) {
+    if (isNew) { payload.subscriptions = subsArr; subsArr.push({ name, amount, billing_day: day, method: subMethodSel, status: p.status }); }
+    else Object.assign(currentSub, { name, amount, billing_day: day, method: subMethodSel, status: p.status });
+    localStorage.setItem(LS.cache, JSON.stringify(payload));
+  }
+  render();
+  if (await apiPost('update_subscription', p)) toast(name + ' saved ✓');
+});
 
 /* ---------- objective modal ---------- */
 function openObjModal(o) {
@@ -1232,26 +1417,36 @@ function syncInstVisibility() {
 function openSpend() {
   commitPendingTx();                     // a new Lançamento commits the previous one
   $('#sp-amount').value = ''; $('#sp-desc').value = '';
-  spendCat = null;
+  spendCatSel = CAT_VAR; spendSub = null;
   instSel.value = '1';
   syncInstVisibility();
-  document.querySelectorAll('#sp-cats button').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('#sp-cat button').forEach(x => x.classList.toggle('on', x.dataset.c === spendCatSel));
+  renderSpendSubs();
   $('#spend-modal').classList.remove('hidden');
   setTimeout(() => $('#sp-amount').focus(), 150);
 }
 $('#fab').addEventListener('click', openSpend);
 
-/* chips: discretionary cats + Investments (kept OUT of DISCRETIONARY so it never counts toward varspend) */
-const catBox = $('#sp-cats');
-for (const c of [...DISCRETIONARY, 'Investments']) {
-  const b = document.createElement('button');
-  b.textContent = c;
-  b.addEventListener('click', () => {
-    spendCat = c;
-    catBox.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-  });
-  catBox.appendChild(b);
+/* Session 8: subcategory chips depend on the selected category */
+function renderSpendSubs() {
+  const catBox = $('#sp-cats'); catBox.innerHTML = '';
+  for (const c of SUBCATS[spendCatSel]) {
+    const b = document.createElement('button');
+    b.textContent = c;
+    b.classList.toggle('on', spendSub === c);
+    b.addEventListener('click', () => {
+      spendSub = c;
+      catBox.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    });
+    catBox.appendChild(b);
+  }
 }
+$('#sp-cat').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  spendCatSel = b.dataset.c; spendSub = null;
+  document.querySelectorAll('#sp-cat button').forEach(x => x.classList.toggle('on', x === b));
+  renderSpendSubs();
+});
 $('#sp-method').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   spendMethod = b.dataset.m;
@@ -1289,34 +1484,36 @@ document.addEventListener('visibilitychange', () => {
 $('#sp-save').addEventListener('click', () => {
   const amt = Math.abs(Number($('#sp-amount').value) || 0);
   if (!amt) { toast('Enter an amount'); return; }
-  if (!spendCat) { toast('Pick a category'); return; }
+  if (!spendSub) { toast('Pick a subcategory'); return; }
   commitPendingTx();                       // only one undoable spend at a time
   const n = spendMethod === 'credit' ? (parseInt(instSel.value, 10) || 1) : 1;
   $('#spend-modal').classList.add('hidden');
   const desc = $('#sp-desc').value.trim();
 
-  const isInvest = spendCat === 'Investments';   // investments never count toward varspend
+  const isVar = spendCatSel === CAT_VAR;   // only Variable Spendings counts toward varspend
   const spendPrev = JSON.parse(localStorage.getItem(LS.spend) || '{}');
   const rows = [];
   const pushRow = r => { txs().push(r); rows.push(r); };
 
   if (n === 1) {
-    if (!isInvest) addManualSpend(amt);      // fallback path (pre-Session 4 API)
-    if (txs()) {                             // Session 4: instant local ledger update
+    if (isVar) addManualSpend(amt);        // fallback path (pre-Session 4 API)
+    if (txs()) {                           // Session 4: instant local ledger update
       pushRow({ date: todayISO(), description: desc, amount: -amt,
-                category: spendCat, source: 'manual', method: spendMethod, review_flag: '' });
+                category: spendCatSel, subcategory: spendSub,
+                source: 'manual', method: spendMethod, review_flag: '' });
       localStorage.setItem(LS.cache, JSON.stringify(payload));
     }
-  } else {                                   // installments: mirror the API's split locally
+  } else {                                 // installments: mirror the API's split locally
     const parts = splitParcelas(Math.round(amt * 100), n);
     const dates = parcelaDates(n);
-    if (!isInvest) addManualSpend(parts[0] / 100);  // only this cycle's parcela counts toward today
+    if (isVar) addManualSpend(parts[0] / 100);  // only this cycle's parcela counts toward today
     if (txs()) {
       parts.forEach((c, k) => pushRow({
         date: dates[k],
         description: (desc ? desc + ' ' : '') + '(parcela ' + (k + 1) + '/' + n + ')',
         amount: -c / 100,
-        category: spendCat, source: 'manual', method: spendMethod, review_flag: ''
+        category: spendCatSel, subcategory: spendSub,
+        source: 'manual', method: spendMethod, review_flag: ''
       }));
       localStorage.setItem(LS.cache, JSON.stringify(payload));
     }
@@ -1328,7 +1525,8 @@ $('#sp-save').addEventListener('click', () => {
       date: todayISO(),
       description: desc,
       amount: -amt,
-      category: spendCat,
+      category: spendCatSel,
+      subcategory: spendSub,
       source: 'manual',
       method: spendMethod,
       installments: n
@@ -1336,7 +1534,7 @@ $('#sp-save').addEventListener('click', () => {
     rows, spendPrev,
     timer: setTimeout(commitPendingTx, 6000)
   };
-  toast(money(amt) + (n > 1 ? ' em ' + n + 'x' : '') + ' · ' + spendCat + ' ✓',
+  toast(money(amt) + (n > 1 ? ' em ' + n + 'x' : '') + ' · ' + spendSub + ' ✓',
         { label: 'Undo', onAction: undoPendingTx, ms: 6000 });
 });
 
