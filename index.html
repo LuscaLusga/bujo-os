@@ -287,7 +287,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 8 build (v10)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 9 build (v11)</div>
       </div>
     </section>
   </main>
@@ -355,8 +355,13 @@
     </div>
     <label>Subcategory</label>
     <div class="chips" id="sp-cats"></div>
-    <label>Description (optional)</label>
+    <label id="sp-desc-label">Description (optional)</label>
     <input id="sp-desc" type="text" placeholder="e.g. bakery">
+    <div id="sp-subwrap" class="hidden">
+      <label>Charge day of month (1–28)</label>
+      <input id="sp-subday" type="number" inputmode="numeric" min="1" max="28">
+      <div class="sub" style="margin-bottom:0;">Saved as an ACTIVE subscription (name = description above). Auto-posts monthly from next month — this Lançamento is this month's charge.</div>
+    </div>
     <div class="row2">
       <button class="btn-ghost" data-close>Cancel</button>
       <button class="btn-go" id="sp-save">Save spend</button>
@@ -424,6 +429,37 @@
   </div>
 </div>
 
+<!-- ============ TRANSACTION MODAL ============ -->
+<div class="overlay hidden" id="tx-modal">
+  <div class="sheet">
+    <h3>Edit transaction</h3>
+    <div class="sub" id="tx-sub"></div>
+    <label>Description</label>
+    <input id="tx-desc" type="text">
+    <div class="cols">
+      <div><label>Amount (R$)</label><input id="tx-amount" type="number" inputmode="decimal" step="0.01" min="0"></div>
+      <div><label>Date</label><input id="tx-date" type="date"></div>
+    </div>
+    <label>Category</label>
+    <div class="seg" id="tx-cat">
+      <button data-c="Variable Spendings">Variable</button>
+      <button data-c="Fixed Costs">Fixed</button>
+      <button data-c="Investment">Invest</button>
+    </div>
+    <label>Subcategory</label>
+    <div class="chips" id="tx-subcats"></div>
+    <div class="seg" id="tx-method">
+      <button data-m="pix">PIX</button>
+      <button data-m="credit">Credit card</button>
+    </div>
+    <div class="row2">
+      <button class="btn-ghost" data-close>Cancel</button>
+      <button class="btn-go" id="tx-save">Save changes</button>
+    </div>
+    <button id="tx-delete" class="btn-ghost" style="width:100%; margin-top:10px; color:var(--red); border-color:var(--red);">Delete transaction</button>
+  </div>
+</div>
+
 <!-- ============ SUBSCRIPTION MODAL ============ -->
 <div class="overlay hidden" id="sub-modal">
   <div class="sheet">
@@ -440,6 +476,7 @@
       <button data-m="pix">PIX</button>
     </div>
     <div class="check"><input id="sub-active" type="checkbox" checked><label style="margin:0;">ACTIVE — auto-posts every month</label></div>
+    <div class="check" id="sub-charged-wrap"><input id="sub-charged" type="checkbox"><label style="margin:0;">Already charged this month (skip this month's auto-post)</label></div>
     <div class="row2">
       <button class="btn-ghost" data-close>Cancel</button>
       <button class="btn-go" id="sub-save">Save</button>
@@ -1081,14 +1118,16 @@ function renderFinance() {
       (splitAsOf || '—') + (untagged ? ' · ' + money(untagged) + ' untagged since (edit subcategory in the Sheet)' : '') + '</div>');
   }
 
-  /* transaction list for the selected method */
+  /* transaction list for the selected method — tap a row to edit/delete (Session 9) */
   const tbox = $('#fi-txs'); tbox.innerHTML = '';
   const list = mtdRows.slice().sort((a,b) => String(b.date).localeCompare(String(a.date)));
   if (!list.length) tbox.innerHTML = '<div class="empty">No transactions this month.</div>';
   for (const t of list) {
     const a = Number(t.amount) || 0;
-    const div = document.createElement('div');
+    const div = document.createElement('button');
     div.className = 'txr';
+    div.style.width = '100%';
+    div.style.textAlign = 'left';
     div.innerHTML = '<div class="m"><div class="n"></div><div class="d"></div></div><div class="a"></div>';
     const tc = txCat(t);
     div.querySelector('.n').textContent = t.description || tc.sub || tc.cat;
@@ -1097,9 +1136,100 @@ function renderFinance() {
     const av = div.querySelector('.a');
     av.textContent = (a >= 0 ? '+' : '−') + money(Math.abs(a));
     if (a > 0) av.classList.add('pos');
+    div.addEventListener('click', () => openTxModal(t));
     tbox.appendChild(div);
   }
 }
+
+/* ---------- transaction edit/delete modal (Session 9) ---------- */
+let currentTx = null, txCatSel = CAT_VAR, txSubSel = null, txMethodSel = 'pix', txDeleteArmed = false;
+
+function renderTxSubcats() {
+  const box = $('#tx-subcats'); box.innerHTML = '';
+  for (const c of SUBCATS[txCatSel]) {
+    const b = document.createElement('button');
+    b.textContent = c;
+    b.classList.toggle('on', txSubSel === c);
+    b.addEventListener('click', () => {
+      txSubSel = c;
+      box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    });
+    box.appendChild(b);
+  }
+}
+$('#tx-cat').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  txCatSel = b.dataset.c; txSubSel = null;
+  document.querySelectorAll('#tx-cat button').forEach(x => x.classList.toggle('on', x === b));
+  renderTxSubcats();
+});
+$('#tx-method').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  txMethodSel = b.dataset.m;
+  document.querySelectorAll('#tx-method button').forEach(x => x.classList.toggle('on', x === b));
+});
+
+/* fields the API matches the sheet row on — captured BEFORE any edits */
+const txMatchOf = t => ({ date: String(t.date), description: t.description || '',
+                          amount: Number(t.amount) || 0, method: t.method || '' });
+
+function openTxModal(t) {
+  commitPendingTx();                 // an in-flight undoable spend must land before editing the ledger
+  currentTx = t;
+  txDeleteArmed = false;
+  $('#tx-delete').textContent = 'Delete transaction';
+  $('#tx-sub').textContent = (t.source || 'statement') + ' row' +
+    (/parcela/.test(String(t.description)) ? ' · parcelas are edited one row at a time' : '');
+  $('#tx-desc').value = t.description || '';
+  $('#tx-amount').value = Math.abs(Number(t.amount) || 0);
+  $('#tx-date').value = String(t.date).slice(0, 10);
+  const tc = txCat(t);
+  txCatSel = SUBCATS[tc.cat] ? tc.cat : CAT_VAR;
+  txSubSel = SUBCATS[txCatSel].includes(tc.sub) ? tc.sub : null;
+  document.querySelectorAll('#tx-cat button').forEach(x => x.classList.toggle('on', x.dataset.c === txCatSel));
+  renderTxSubcats();
+  txMethodSel = t.method === 'credit' ? 'credit' : 'pix';
+  document.querySelectorAll('#tx-method button').forEach(x => x.classList.toggle('on', x.dataset.m === txMethodSel));
+  $('#tx-modal').classList.remove('hidden');
+}
+
+$('#tx-save').addEventListener('click', async () => {
+  const newAmt = Math.abs(Number($('#tx-amount').value) || 0);
+  if (!newAmt) { toast('Enter an amount'); return; }
+  const newDate = $('#tx-date').value || String(currentTx.date).slice(0, 10);
+  const sign = (Number(currentTx.amount) || 0) >= 0 ? 1 : -1;
+  const match = txMatchOf(currentTx);
+  const set = {
+    date: newDate,
+    description: $('#tx-desc').value.trim(),
+    amount: sign * newAmt,
+    category: txCatSel,
+    subcategory: txSubSel || '',
+    method: txMethodSel
+  };
+  $('#tx-modal').classList.add('hidden');
+  Object.assign(currentTx, set);
+  if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
+  render();
+  if (await apiPost('update_transaction', { match, set })) toast('Transaction updated ✓');
+});
+
+$('#tx-delete').addEventListener('click', async () => {
+  if (!txDeleteArmed) {
+    txDeleteArmed = true;
+    $('#tx-delete').textContent = 'Tap again to delete';
+    return;
+  }
+  const match = txMatchOf(currentTx);
+  $('#tx-modal').classList.add('hidden');
+  if (txs()) {
+    const i = txs().indexOf(currentTx);
+    if (i > -1) txs().splice(i, 1);
+  }
+  if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
+  render();
+  if (await apiPost('delete_transaction', { match })) toast('Transaction deleted ✓');
+});
 
 $('#fi-method').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1185,6 +1315,8 @@ function openSubModal(s) {            // s = null → new subscription
   $('#sub-day').value = s ? (Number(s.billing_day) || '') : '';
   setSubMethodSeg(s && s.method === 'pix' ? 'pix' : 'credit');
   $('#sub-active').checked = s ? String(s.status || '').toUpperCase() === 'ACTIVE' : true;
+  $('#sub-charged').checked = false;
+  $('#sub-charged-wrap').classList.toggle('hidden', !!s && String(s.last_posted || '').slice(0, 7) === todayISO().slice(0, 7));
   $('#sub-modal').classList.remove('hidden');
   if (!s) setTimeout(() => $('#sub-name').focus(), 150);
 }
@@ -1207,11 +1339,12 @@ $('#sub-save').addEventListener('click', async () => {
     method: subMethodSel,
     status: $('#sub-active').checked ? 'ACTIVE' : 'INACTIVE'
   };
+  if ($('#sub-charged').checked) p.last_posted = todayISO();   // skip this month's auto-post
   if (!isNew && name !== currentSub.name) p.new_name = name;
   $('#sub-modal').classList.add('hidden');
   if (payload) {
-    if (isNew) { payload.subscriptions = subsArr; subsArr.push({ name, amount, billing_day: day, method: subMethodSel, status: p.status }); }
-    else Object.assign(currentSub, { name, amount, billing_day: day, method: subMethodSel, status: p.status });
+    if (isNew) { payload.subscriptions = subsArr; subsArr.push({ name, amount, billing_day: day, method: subMethodSel, status: p.status, last_posted: p.last_posted || '' }); }
+    else Object.assign(currentSub, { name, amount, billing_day: day, method: subMethodSel, status: p.status }, p.last_posted ? { last_posted: p.last_posted } : {});
     localStorage.setItem(LS.cache, JSON.stringify(payload));
   }
   render();
@@ -1411,15 +1544,23 @@ for (let i = 1; i <= 12; i++) {
   o.value = i; o.textContent = i === 1 ? '1x (à vista)' : i + 'x';
   instSel.appendChild(o);
 }
+const isSubSpend = () => spendSub === 'Subscriptions';
 function syncInstVisibility() {
-  $('#sp-inst-wrap').classList.toggle('hidden', spendMethod !== 'credit');
+  /* subscriptions are monthly by nature — no installments */
+  $('#sp-inst-wrap').classList.toggle('hidden', spendMethod !== 'credit' || isSubSpend());
+}
+function syncSubWrap() {
+  $('#sp-subwrap').classList.toggle('hidden', !isSubSpend());
+  $('#sp-desc-label').textContent = isSubSpend() ? 'Subscription name (required)' : 'Description (optional)';
+  syncInstVisibility();
 }
 function openSpend() {
   commitPendingTx();                     // a new Lançamento commits the previous one
   $('#sp-amount').value = ''; $('#sp-desc').value = '';
   spendCatSel = CAT_VAR; spendSub = null;
   instSel.value = '1';
-  syncInstVisibility();
+  $('#sp-subday').value = Math.min(new Date().getDate(), 28);
+  syncSubWrap();
   document.querySelectorAll('#sp-cat button').forEach(x => x.classList.toggle('on', x.dataset.c === spendCatSel));
   renderSpendSubs();
   $('#spend-modal').classList.remove('hidden');
@@ -1437,6 +1578,7 @@ function renderSpendSubs() {
     b.addEventListener('click', () => {
       spendSub = c;
       catBox.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      syncSubWrap();                       // Session 9: Subscriptions chip reveals the charge-day field
     });
     catBox.appendChild(b);
   }
@@ -1446,6 +1588,7 @@ $('#sp-cat').addEventListener('click', e => {
   spendCatSel = b.dataset.c; spendSub = null;
   document.querySelectorAll('#sp-cat button').forEach(x => x.classList.toggle('on', x === b));
   renderSpendSubs();
+  syncSubWrap();
 });
 $('#sp-method').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1463,6 +1606,7 @@ function commitPendingTx() {
   const p = pendingTx; pendingTx = null;
   clearTimeout(p.timer);
   apiPost('add_transaction', p.apiPayload);
+  if (p.subPayload) apiPost('update_subscription', p.subPayload);   // Session 9: sub created via Lançamento
 }
 function undoPendingTx() {
   if (!pendingTx) return;
@@ -1471,6 +1615,11 @@ function undoPendingTx() {
   if (txs()) {
     p.rows.forEach(r => { const i = txs().indexOf(r); if (i > -1) txs().splice(i, 1); });
   }
+  /* roll back the subscription mirror too */
+  if (p.subNew && payload && payload.subscriptions) {
+    payload.subscriptions = payload.subscriptions.filter(s => s !== p.subNew);
+  }
+  if (p.subRef && p.subPrev) Object.assign(p.subRef, p.subPrev);
   localStorage.setItem(LS.spend, JSON.stringify(p.spendPrev));
   if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
   render();
@@ -1485,10 +1634,31 @@ $('#sp-save').addEventListener('click', () => {
   const amt = Math.abs(Number($('#sp-amount').value) || 0);
   if (!amt) { toast('Enter an amount'); return; }
   if (!spendSub) { toast('Pick a subcategory'); return; }
-  commitPendingTx();                       // only one undoable spend at a time
-  const n = spendMethod === 'credit' ? (parseInt(instSel.value, 10) || 1) : 1;
-  $('#spend-modal').classList.add('hidden');
   const desc = $('#sp-desc').value.trim();
+  if (isSubSpend() && !desc) { toast('Give the subscription a name in Description'); return; }
+  commitPendingTx();                       // only one undoable spend at a time
+  const n = (spendMethod === 'credit' && !isSubSpend()) ? (parseInt(instSel.value, 10) || 1) : 1;
+  $('#spend-modal').classList.add('hidden');
+
+  /* Session 9: Subscriptions chip → upsert an ACTIVE row in the Subscriptions tab.
+     last_posted = today so the daily trigger won't double-post this month. */
+  let subPayload = null, subNew = null, subRef = null, subPrev = null;
+  if (isSubSpend()) {
+    const sday = Math.min(Math.max(parseInt($('#sp-subday').value, 10) || new Date().getDate(), 1), 28);
+    subPayload = { name: desc, amount: amt, billing_day: sday, method: spendMethod,
+                   status: 'ACTIVE', last_posted: todayISO() };
+    const subs = (payload && payload.subscriptions) || [];
+    subRef = subs.find(s => String(s.name).trim().toLowerCase() === desc.toLowerCase()) || null;
+    if (subRef) {
+      subPrev = JSON.parse(JSON.stringify(subRef));
+      Object.assign(subRef, { amount: amt, billing_day: sday, method: spendMethod,
+                              status: 'ACTIVE', last_posted: todayISO() });
+    } else {
+      subNew = { name: desc, amount: amt, billing_day: sday, method: spendMethod,
+                 status: 'ACTIVE', last_posted: todayISO() };
+      if (payload) { payload.subscriptions = subs; subs.push(subNew); }
+    }
+  }
 
   const isVar = spendCatSel === CAT_VAR;   // only Variable Spendings counts toward varspend
   const spendPrev = JSON.parse(localStorage.getItem(LS.spend) || '{}');
@@ -1532,9 +1702,11 @@ $('#sp-save').addEventListener('click', () => {
       installments: n
     },
     rows, spendPrev,
+    subPayload, subNew, subRef, subPrev,
     timer: setTimeout(commitPendingTx, 6000)
   };
-  toast(money(amt) + (n > 1 ? ' em ' + n + 'x' : '') + ' · ' + spendSub + ' ✓',
+  toast(money(amt) + (n > 1 ? ' em ' + n + 'x' : '') + ' · ' + spendSub +
+        (subPayload ? ' · sub registered' : '') + ' ✓',
         { label: 'Undo', onAction: undoPendingTx, ms: 6000 });
 });
 
