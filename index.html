@@ -222,6 +222,7 @@
       <div class="seg" style="margin-top:16px" id="tr-range">
         <button data-d="7" class="on">7 days</button>
         <button data-d="30">30 days</button>
+        <button data-d="90">90 days</button>
       </div>
       <h2>This week vs weekly target</h2>
       <div id="tr-week"></div>
@@ -245,8 +246,21 @@
         <div style="font-size:1.8rem; font-weight:700;" id="fi-total-v">—</div>
         <div class="mono" id="fi-total-s"></div>
       </div>
-      <h2>Categories — month vs 3-month avg</h2>
-      <div id="fi-cats"></div>
+      <h2>Spending explorer</h2>
+      <div class="seg" id="fi-window">
+        <button data-w="3" class="on">Last 3M</button>
+        <button data-w="6">Last 6M</button>
+        <button data-w="ytd">YTD</button>
+      </div>
+      <div id="fi-catsum"></div>
+      <div id="fi-recat"></div>
+      <h2>Subcategories over time</h2>
+      <div class="chips" id="fi-subfilter" style="margin:0 0 10px;"></div>
+      <div class="chart-card">
+        <div class="t"><span class="n" id="fi-sub-n"></span><span class="s" id="fi-sub-s"></span></div>
+        <canvas id="fi-subchart"></canvas>
+      </div>
+      <div id="fi-subsum"></div>
       <h2>Projection — this month</h2>
       <div class="set-card" id="fi-proj"></div>
       <h2>Anderson</h2>
@@ -276,6 +290,18 @@
       <div class="set-card" id="sub-list"></div>
       <button class="btn-primary" id="sub-add" style="margin-top:0;">+ Add subscription</button>
 
+      <h2>Income & snapshots</h2>
+      <div class="set-card">
+        <label>Monthly income — salary (R$)</label>
+        <input id="inc-salary" type="number" inputmode="decimal" step="0.01" min="0">
+        <div class="mono" style="margin-top:6px;">Every goal with a salary_mult in the Goals tab follows this automatically (varcap 0.3 · investmonthly 0.1 · invest6x 6 · fixedcap 0.602…). Add salary_mult to any future goal and it joins in.</div>
+        <label>Total invested today (R$) — refreshes invest10k + invest6x, as_of = today</label>
+        <input id="inc-invest" type="number" inputmode="decimal" step="0.01" min="0" placeholder="leave blank to keep">
+        <label>Anderson arrears (R$)</label>
+        <input id="inc-arrears" type="number" inputmode="decimal" step="0.01" min="0" placeholder="leave blank to keep">
+        <button class="btn-primary" id="inc-save">Save income & snapshots</button>
+      </div>
+
       <h2>Connection</h2>
       <div class="set-card">
         <label>API URL</label><input id="st-url" type="url">
@@ -287,7 +313,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 9 build (v11)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 10 build (v12)</div>
       </div>
     </section>
   </main>
@@ -502,14 +528,14 @@
 /* Session 8: 3-level category scheme — category + subcategory columns in Transactions. */
 const CAT_VAR = 'Variable Spendings', CAT_FIXED = 'Fixed Costs', CAT_INVEST = 'Investment';
 const SUBCATS = {};
-SUBCATS[CAT_VAR]    = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Transportation','Subscriptions','Other'];
-SUBCATS[CAT_FIXED]  = ['Conta de Internet','Conta de Luz','Dízimo','Conta de Água','Health & Insurance','Education'];
+SUBCATS[CAT_VAR]    = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Subscriptions','Other'];
+SUBCATS[CAT_FIXED]  = ['Conta de Internet','Conta de Luz','Dízimo','Conta de Água','Transportation','Health & Insurance','Education'];
 SUBCATS[CAT_INVEST] = ['Renda Fixa','Renda Variável'];
 /* legacy (pre-migration) category → [category, subcategory] */
 const LEGACY_MAP = {
   'Food & Dining':[CAT_VAR,'Food & Dining'], 'Groceries':[CAT_VAR,'Groceries'],
   'Entertainment':[CAT_VAR,'Entertainment'], 'Shopping':[CAT_VAR,'Shopping'],
-  'Pet':[CAT_VAR,'Pet'], 'Transportation':[CAT_VAR,'Transportation'],
+  'Pet':[CAT_VAR,'Pet'], 'Transportation':[CAT_FIXED,'Transportation'],
   'Subscriptions':[CAT_VAR,'Subscriptions'], 'Other':[CAT_VAR,'Other'],
   'Investments':[CAT_INVEST,''],
   'Donations & Charity':[CAT_FIXED,'Dízimo'], 'Health & Insurance':[CAT_FIXED,'Health & Insurance'],
@@ -518,7 +544,12 @@ const LEGACY_MAP = {
 /* normalized {cat, sub} for any transaction, migrated or not */
 function txCat(t) {
   const c = String(t.category || '').trim();
-  if (c === CAT_VAR || c === CAT_FIXED || c === CAT_INVEST) return { cat: c, sub: String(t.subcategory || '').trim() };
+  if (c === CAT_VAR || c === CAT_FIXED || c === CAT_INVEST) {
+    const sub = String(t.subcategory || '').trim();
+    /* Session 10: Transportation lives under Fixed Costs — remap rows migrated before the move */
+    if (c === CAT_VAR && sub === 'Transportation') return { cat: CAT_FIXED, sub };
+    return { cat: c, sub };
+  }
   const m = LEGACY_MAP[c];
   return m ? { cat: m[0], sub: m[1] } : { cat: c, sub: String(t.subcategory || '').trim() };
 }
@@ -531,6 +562,7 @@ let currentKpi = null, currentBook = null, editingNewObjective = false;
 let spendMethod = 'pix', spendCatSel = CAT_VAR, spendSub = null;
 let trRange = 7;
 let finMethod = 'all';
+let finWindow = '3', fiSubCat = 'Variable Spendings', fiSubChartRef = null, fiShowRecat = false;
 let chartRefs = [];
 
 const isoOf = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -647,12 +679,14 @@ function streak() {
   return n;
 }
 
-/* per-KPI: a day "qualifies" if value>0 (higher) or logged & under daily target (lower) */
+/* per-KPI: a day "qualifies" only if the daily TARGET was met (Session 10) —
+   higher: v >= target (or v > 0 when no target set) · lower: v <= target */
 function kpiQualifies(o, r) {
   if (!r) return false;
   const v = Number(r.value) || 0;
-  if (o.direction === 'lower') { const t = Number(o.daily_target) || 0; return t ? v <= t : true; }
-  return v > 0;
+  const t = Number(o.daily_target) || 0;
+  if (o.direction === 'lower') return t ? v <= t : true;
+  return t ? v >= t : v > 0;
 }
 function kpiStreaks(o) {
   const derived = o.kpi_id === 'varspend' && !!txs();
@@ -792,7 +826,8 @@ function renderKpis() {
     let sub;
     if (derived) {
       val = varspendMTD();
-      target = Number((goalRow('varcap') || {}).target) || target * 30;
+      const vc = goalRow('varcap');
+      target = (vc ? goalTarget(vc) : 0) || target * 30;
       sub = 'month so far · cap ' + money(target);
     } else if (isVar) {
       val = (val || 0) + manualSpendToday();
@@ -967,6 +1002,16 @@ function priorMonthKeys(n) {
   }
   return out;
 }
+/* Session 10: 'yyyy-MM' keys for the explorer window, oldest → newest, incl. current month */
+function finWindowMonths() {
+  const now = new Date();
+  const n = finWindow === 'ytd' ? now.getMonth() + 1 : Number(finWindow);
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    out.push(isoOf(new Date(now.getFullYear(), now.getMonth() - i, 1)).slice(0, 7));
+  }
+  return out;
+}
 function spendSum(rows) { return rows.reduce((s,t) => s + (Number(t.amount) < 0 ? -Number(t.amount) : 0), 0); }
 function varspendMTD() {
   if (!txs()) return null;
@@ -990,6 +1035,13 @@ function recActive(r, mk) {
   return (!s || s <= mk) && (!e || e >= mk);
 }
 const goalRow = id => ((payload && payload.goals) || []).find(g => g.goal_id === id);
+/* Session 10: salary lives in Goals (goal_id=salary, current=value). Goals with a
+   salary_mult get their target computed live from it — one edit updates them all. */
+const salaryVal = () => Number((goalRow('salary') || {}).current) || 0;
+function goalTarget(g) {
+  const m = Number(g.salary_mult) || 0, s = salaryVal();
+  return (m && s) ? m * s : (Number(g.target) || 0);
+}
 const signed = v => (v < 0 ? '−' : '') + money(Math.abs(v));
 const projLine = (label, v) => '<div class="pline"><span>' + label + '</span><span>' + signed(v) + '</span></div>';
 
@@ -1017,28 +1069,106 @@ function renderFinance() {
   $('#fi-total-v').textContent = money(spendSum(mtdRows));
   $('#fi-total-s').textContent = (finMethod === 'all' ? 'All methods' : finMethod === 'pix' ? 'PIX' : 'Credit card') + ' · spent in ' + mk;
 
-  /* categories: MTD vs trailing-3-month average */
-  const cbox = $('#fi-cats'); cbox.innerHTML = '';
-  const mtdCat = {}, avgCat = {};
-  const catKey = t => { const c = txCat(t); return c.sub || c.cat || 'Uncategorized'; };
-  mtdRows.forEach(t => { if (Number(t.amount) < 0) mtdCat[catKey(t)] = (mtdCat[catKey(t)] || 0) + (-Number(t.amount)); });
-  rows.filter(t => prior.includes(txMonth(t))).forEach(t => {
-    if (Number(t.amount) < 0) avgCat[catKey(t)] = (avgCat[catKey(t)] || 0) + (-Number(t.amount));
+  /* ============ Spending explorer (Session 10) — PBI-style ============ */
+  const months = finWindowMonths();
+  const mCount = months.length;
+  const winRows = rows.filter(t => months.includes(txMonth(t)) && Number(t.amount) < 0);
+
+  /* view 1 — category totals + monthly average over the window */
+  const catTot = {}; catTot[CAT_VAR] = 0; catTot[CAT_FIXED] = 0; catTot[CAT_INVEST] = 0;
+  const unmapped = [];
+  winRows.forEach(t => {
+    const c = txCat(t).cat;
+    if (catTot[c] !== undefined) catTot[c] += -Number(t.amount);
+    else unmapped.push(t);
   });
-  Object.keys(avgCat).forEach(k => avgCat[k] /= 3);
-  const names = [...new Set([...Object.keys(mtdCat), ...Object.keys(avgCat)])]
-    .sort((a,b) => (mtdCat[b] || 0) - (mtdCat[a] || 0));
-  if (!names.length) cbox.innerHTML = '<div class="empty">No spending recorded for this filter yet.</div>';
-  for (const c of names) {
-    const m = mtdCat[c] || 0, a = avgCat[c] || 0;
-    const over = a > 0 && m > a;
-    cbox.appendChild(barRow(c, money(m) + ' · avg ' + money(a),
-      a ? m / a : (m > 0 ? 1 : 0), over ? 'var(--red)' : 'var(--green)'));
+  const csum = $('#fi-catsum'); csum.innerHTML = '';
+  const maxCat = Math.max(catTot[CAT_VAR], catTot[CAT_FIXED], catTot[CAT_INVEST], 1);
+  [[CAT_VAR,'var(--amber)'], [CAT_FIXED,'var(--accent)'], [CAT_INVEST,'var(--green)']].forEach(pair => {
+    const v = catTot[pair[0]];
+    csum.appendChild(barRow(pair[0], money(v) + ' · avg ' + money(v / mCount) + '/mo', v / maxCat, pair[1]));
+  });
+
+  /* recategorization queue — rows that don't fit the Lançamento scheme (mostly pre-July) */
+  const rbox = $('#fi-recat'); rbox.innerHTML = '';
+  if (unmapped.length) {
+    const head = document.createElement('button');
+    head.className = 'wk';
+    head.style.width = '100%'; head.style.textAlign = 'left';
+    head.style.borderLeft = '3px solid var(--red)';
+    head.innerHTML = '<div class="l"><span class="n"></span><span class="v"></span></div>';
+    head.querySelector('.n').textContent = '⚠️ Needs recategorization (' + unmapped.length + ')';
+    head.querySelector('.v').textContent = money(unmapped.reduce((s,t) => s + (-Number(t.amount)), 0)) +
+      (fiShowRecat ? ' · hide' : ' · tap to fix');
+    head.addEventListener('click', () => { fiShowRecat = !fiShowRecat; renderFinance(); });
+    rbox.appendChild(head);
+    if (fiShowRecat) {
+      for (const t of unmapped.slice(0, 60)) {
+        const div = document.createElement('button');
+        div.className = 'txr';
+        div.style.width = '100%'; div.style.textAlign = 'left';
+        div.innerHTML = '<div class="m"><div class="n"></div><div class="d"></div></div><div class="a"></div>';
+        div.querySelector('.n').textContent = t.description || t.category || '—';
+        div.querySelector('.d').textContent = String(t.date).slice(0, 10) + ' · was: ' + (t.category || 'uncategorized');
+        div.querySelector('.a').textContent = '−' + money(Math.abs(Number(t.amount) || 0));
+        div.addEventListener('click', () => openTxModal(t));   // save in the modal = recategorized
+        rbox.appendChild(div);
+      }
+    }
   }
 
-  /* projection card (same math as the Projection tab) */
+  /* view 2 — subcategories over time (stacked by month), category as filter */
+  const fbox = $('#fi-subfilter'); fbox.innerHTML = '';
+  [CAT_VAR, CAT_FIXED, CAT_INVEST].forEach(c => {
+    const b = document.createElement('button');
+    b.textContent = c === CAT_VAR ? 'Variable' : c === CAT_FIXED ? 'Fixed' : 'Investment';
+    b.classList.toggle('on', fiSubCat === c);
+    b.addEventListener('click', () => { fiSubCat = c; renderFinance(); });
+    fbox.appendChild(b);
+  });
+  const subRowsW = winRows.filter(t => txCat(t).cat === fiSubCat);
+  const subNames = SUBCATS[fiSubCat].slice();
+  subRowsW.forEach(t => { const s = txCat(t).sub || '—'; if (!subNames.includes(s)) subNames.push(s); });
+  const series = {};
+  subNames.forEach(s => series[s] = months.map(() => 0));
+  subRowsW.forEach(t => {
+    const s = txCat(t).sub || '—';
+    const mi = months.indexOf(txMonth(t));
+    if (mi > -1) series[s][mi] += -Number(t.amount);
+  });
+  $('#fi-sub-n').textContent = fiSubCat;
+  $('#fi-sub-s').textContent = mCount + (mCount === 1 ? ' month' : ' months');
+  if (fiSubChartRef) { fiSubChartRef.destroy(); fiSubChartRef = null; }
+  if (typeof Chart !== 'undefined') {
+    const PALETTE = ['#8B5CF6','#10B981','#F59E0B','#EF4444','#3B82F6','#EC4899','#14B8A6','#F97316','#A3E635','#94A3B8'];
+    const datasets = subNames.filter(s => series[s].some(v => v > 0)).map((s, i) => ({
+      label: s, data: series[s], backgroundColor: PALETTE[i % PALETTE.length] + 'CC', stack: 'a', borderRadius: 2
+    }));
+    fiSubChartRef = new Chart($('#fi-subchart'), {
+      type: 'bar',
+      data: { labels: months.map(m => m.slice(5,7) + '/' + m.slice(2,4)), datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 9 } } } },
+        scales: {
+          x: { stacked: true, grid: { display: false } },
+          y: { stacked: true, beginAtZero: true, grid: { color: 'rgba(42,50,64,.5)' }, ticks: { maxTicksLimit: 4 } }
+        }
+      }
+    });
+  }
+  const ssum = $('#fi-subsum'); ssum.innerHTML = '';
+  const totals = subNames.map(s => [s, series[s].reduce((a,b) => a + b, 0)])
+    .filter(x => x[1] > 0).sort((a,b) => b[1] - a[1]);
+  if (!totals.length) ssum.innerHTML = '<div class="empty">No ' + fiSubCat + ' spending in this window.</div>';
+  const maxS = totals.length ? totals[0][1] : 1;
+  totals.forEach(x => ssum.appendChild(
+    barRow(x[0], money(x[1]) + ' · avg ' + money(x[1] / mCount) + '/mo', x[1] / maxS, 'var(--accent)')));
+
+  /* projection card (same math as the Projection tab) —
+     Session 10: income = salary goal when set (editable in Settings), else Recurring */
   const act = recurringRows().filter(r => recActive(r, mk));
-  const inc = act.reduce((s,r) => s + (Number(r.amount) > 0 ? Number(r.amount) : 0), 0);
+  const inc = salaryVal() || act.reduce((s,r) => s + (Number(r.amount) > 0 ? Number(r.amount) : 0), 0);
   const fx  = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && !r.end ? a : 0); }, 0);
   const ins = act.reduce((s,r) => { const a = Number(r.amount); return s + (a < 0 && r.end ? a : 0); }, 0);
   const varEst = -spendSum(txs().filter(t => prior.includes(txMonth(t)) && txCat(t).cat === CAT_VAR)) / 3;
@@ -1062,11 +1192,12 @@ function renderFinance() {
 
   /* goals: R$ + %, invest10k first; monthly caps computed live */
   const gbox = $('#fi-goals'); gbox.innerHTML = '';
-  const gl = ((payload && payload.goals) || []).filter(g => g.goal_id !== 'andersonarrears' && g.goal_id !== 'rfsplit');
+  const gl = ((payload && payload.goals) || []).filter(g =>
+    g.goal_id !== 'andersonarrears' && g.goal_id !== 'rfsplit' && g.goal_id !== 'salary');
   gl.sort((a,b) => (a.goal_id === 'invest10k' ? -1 : b.goal_id === 'invest10k' ? 1 : 0));
   for (const g of gl) {
     let cur = Number(g.current) || 0;
-    const tgt = Number(g.target) || 0;
+    const tgt = goalTarget(g);
     const isCap = g.goal_id === 'varcap' || g.goal_id === 'fixedcap';
     if (g.goal_id === 'investmonthly') cur = spendSum(txs().filter(t => txMonth(t) === mk && txCat(t).cat === CAT_INVEST));
     /* invest10k / invest6x: current = manual snapshot (as of Goals.as_of) + contributions logged since.
@@ -1099,8 +1230,10 @@ function renderFinance() {
         String(t.date) > g10AsOf && String(t.date) <= splitAsOf));
     }
     let rf = base * rfPct / 100, rv = base * (100 - rfPct) / 100, untagged = 0;
+    /* contributions cutoff = the newest snapshot, so a fresh invest10k as_of never double-counts */
+    const cutoff = g10AsOf > splitAsOf ? g10AsOf : splitAsOf;
     txs().forEach(t => {
-      if (txCat(t).cat !== CAT_INVEST || String(t.date) <= splitAsOf) return;
+      if (txCat(t).cat !== CAT_INVEST || String(t.date) <= cutoff) return;
       const a = Number(t.amount) < 0 ? -Number(t.amount) : 0;
       if (!a) return;
       const s = txCat(t).sub;
@@ -1237,6 +1370,12 @@ $('#fi-method').addEventListener('click', e => {
   document.querySelectorAll('#fi-method button').forEach(x => x.classList.toggle('on', x === b));
   renderFinance();
 });
+$('#fi-window').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  finWindow = b.dataset.w;
+  document.querySelectorAll('#fi-window button').forEach(x => x.classList.toggle('on', x === b));
+  renderFinance();
+});
 
 /* ================= render: settings ================= */
 function renderSettings() {
@@ -1280,6 +1419,11 @@ function renderSettings() {
     bq.appendChild(row);
   }
 
+  /* income prefill (don't clobber while typing) */
+  if (document.activeElement !== $('#inc-salary') && !$('#inc-salary').value && salaryVal()) {
+    $('#inc-salary').value = salaryVal();
+  }
+
   /* subscriptions */
   const sl = $('#sub-list'); sl.innerHTML = '';
   const subs = (payload && payload.subscriptions) || [];
@@ -1296,6 +1440,39 @@ function renderSettings() {
     sl.appendChild(row);
   }
 }
+
+/* ---------- income & snapshots (Session 10) ---------- */
+$('#inc-save').addEventListener('click', async () => {
+  const s = Number($('#inc-salary').value) || 0;
+  const inv = $('#inc-invest').value === '' ? null : Math.abs(Number($('#inc-invest').value) || 0);
+  const arr = $('#inc-arrears').value === '' ? null : Math.abs(Number($('#inc-arrears').value) || 0);
+  const goals = (payload && payload.goals) || [];
+  const upsertLocal = (id, patch) => {
+    let g = goals.find(x => x.goal_id === id);
+    if (!g) { g = { goal_id: id, name: id }; goals.push(g); if (payload) payload.goals = goals; }
+    Object.assign(g, patch);
+  };
+  const jobs = [];
+  if (s && s !== salaryVal()) {
+    upsertLocal('salary', { name: 'Salary', current: s });
+    jobs.push(apiPost('update_goal', { goal_id: 'salary', name: 'Salary', current: s }));
+  }
+  if (inv !== null) {
+    upsertLocal('invest10k', { current: inv, as_of: todayISO() });
+    upsertLocal('invest6x', { current: inv, as_of: todayISO() });
+    jobs.push(apiPost('update_goal', { goal_id: 'invest10k', current: inv, as_of: todayISO() }));
+    jobs.push(apiPost('update_goal', { goal_id: 'invest6x', current: inv, as_of: todayISO() }));
+  }
+  if (arr !== null) {
+    upsertLocal('andersonarrears', { current: arr });
+    jobs.push(apiPost('update_goal', { goal_id: 'andersonarrears', current: arr }));
+  }
+  if (!jobs.length) { toast('Nothing changed'); return; }
+  if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
+  $('#inc-invest').value = ''; $('#inc-arrears').value = '';
+  render();
+  if ((await Promise.all(jobs)).every(Boolean)) toast('Income & snapshots saved ✓');
+});
 
 /* ---------- subscription modal ---------- */
 let currentSub = null, subMethodSel = 'credit';
