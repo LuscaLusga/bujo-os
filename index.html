@@ -41,6 +41,9 @@
 
   /* ---------- header ---------- */
   header{padding:calc(18px + env(safe-area-inset-top)) 20px 4px;}
+  header .hwrap{display:flex; align-items:center; gap:12px;}
+  header .hlogo{height:46px; width:auto; border-radius:10px; flex:none;}
+  header .hmain{flex:1; min-width:0;}
   header .date{color:var(--dim); font-size:.85rem;}
   header .row{display:flex; align-items:center; justify-content:space-between;}
   .streak{background:var(--card); border:1px solid var(--line); border-radius:999px;
@@ -182,7 +185,8 @@
 
 <!-- ============ FIRST-RUN SETUP ============ -->
 <div id="setup" class="hidden">
-  <div class="logo">◐ BuJo OS</div>
+  <img src="logo-small.png" alt="BuJo OS logo" style="height:150px; display:block; margin:0 auto 12px; border-radius:18px;">
+  <div class="logo" style="text-align:center;">BuJo OS</div>
   <p>Connect the app to your Apps Script API. You only do this once — both values stay on this device (localStorage).</p>
   <label>API URL (ends in /exec)</label>
   <input id="su-url" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
@@ -195,10 +199,15 @@
 <!-- ============ APP ============ -->
 <div id="app" class="hidden">
   <header>
-    <div class="date" id="h-date"></div>
-    <div class="row">
-      <h1 id="h-greet"></h1>
-      <div class="streak" id="h-streak"></div>
+    <div class="hwrap">
+      <img src="logo-small.png" class="hlogo" alt="BuJo OS">
+      <div class="hmain">
+        <div class="date" id="h-date"></div>
+        <div class="row">
+          <h1 id="h-greet"></h1>
+          <div class="streak" id="h-streak"></div>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -309,7 +318,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 13 build (v15)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 14 build (v16)</div>
       </div>
     </section>
   </main>

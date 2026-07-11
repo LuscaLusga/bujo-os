@@ -1,6 +1,6 @@
 /* BuJo OS service worker — app shell cache. Bump VERSION on every release. */
-const VERSION = 'bujo-os-v15';
-const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const VERSION = 'bujo-os-v16';
+const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './logo-small.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
