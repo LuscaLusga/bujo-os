@@ -224,11 +224,11 @@
         <button data-d="30">30 days</button>
         <button data-d="90">90 days</button>
       </div>
-      <h2>This week vs weekly target</h2>
+      <h2>Achieved vs. target</h2>
       <div id="tr-week"></div>
       <h2>Daily charts</h2>
       <div id="tr-charts"></div>
-      <h2>Streaks (last 30 days)</h2>
+      <h2 id="tr-streaks-h">Streaks</h2>
       <div id="tr-streaks"></div>
       <h2>Books in progress</h2>
       <div id="tr-books"></div>
@@ -248,8 +248,9 @@
       </div>
       <h2>Spending explorer</h2>
       <div class="seg" id="fi-window">
-        <button data-w="3" class="on">Last 3M</button>
-        <button data-w="6">Last 6M</button>
+        <button data-w="1">Month</button>
+        <button data-w="3" class="on">3M</button>
+        <button data-w="6">6M</button>
         <button data-w="ytd">YTD</button>
       </div>
       <div id="fi-catsum"></div>
@@ -313,7 +314,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 10 build (v12)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 11 build (v13)</div>
       </div>
     </section>
   </main>
@@ -688,11 +689,13 @@ function kpiQualifies(o, r) {
   if (o.direction === 'lower') return t ? v <= t : true;
   return t ? v >= t : v > 0;
 }
-function kpiStreaks(o) {
-  const derived = o.kpi_id === 'varspend' && !!txs();
+function kpiStreaks(o, n) {
+  n = n || 30;                                       // Session 11: follows the Trends time filter
+  const dcat = derivedCatOf(o);
+  const derived = dcat && !!txs();
   const map = {};
   if (derived) {
-    const sm = dailySpendMap();
+    const sm = dailyCatMap(dcat);
     Object.keys(sm).forEach(d => map[d] = { value: sm[d] });
   } else {
     kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) map[String(r.date)] = r; });
@@ -700,12 +703,12 @@ function kpiStreaks(o) {
   const q = iso => derived ? kpiQualifies(o, map[iso] || { value: 0 })   // no spend that day = under cap
                            : kpiQualifies(o, map[iso]);
   let best = 0, run = 0;
-  for (let i = 29; i >= 0; i--) {
+  for (let i = n - 1; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     if (q(isoOf(d))) { run++; best = Math.max(best, run); } else run = 0;
   }
   let cur = 0;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < n; i++) {
     const d = new Date(); d.setDate(d.getDate() - i);
     if (q(isoOf(d))) cur++;
     else if (i === 0) continue;           // today still pending doesn't break the streak
@@ -820,14 +823,15 @@ function renderKpis() {
   const box = $('#kpis'); box.innerHTML = '';
   for (const o of activeObjectives()) {
     const isVar = o.kpi_id === 'varspend';
-    const derived = isVar && !!txs();          // Session 4: varspend read from Transactions
+    const dcat = derivedCatOf(o);              // varspend OR fixedcosts (Session 11)
+    const derived = dcat && !!txs();           // derived KPIs read the Transactions ledger
     let val = todaysValue(o.kpi_id);
     let target = Number(o.daily_target) || 0;
     let sub;
     if (derived) {
-      val = varspendMTD();
-      const vc = goalRow('varcap');
-      target = (vc ? goalTarget(vc) : 0) || target * 30;
+      val = dcat === CAT_FIXED ? fixedMTD() : varspendMTD();
+      const capG = goalRow(dcat === CAT_FIXED ? 'fixedcap' : 'varcap');
+      target = (capG ? goalTarget(capG) : 0) || target * 30;
       sub = 'month so far · cap ' + money(target);
     } else if (isVar) {
       val = (val || 0) + manualSpendToday();
@@ -842,7 +846,7 @@ function renderKpis() {
       over = o.direction === 'lower' ? (val || 0) > target : false;
       pct = Math.min(pct, 1);
     }
-    const shown = !logged ? '—' : (isVar ? Math.round(val) : (Number.isInteger(val) ? val : val.toFixed(1)));
+    const shown = !logged ? '—' : ((isVar || derived) ? Math.round(val) : (Number.isInteger(val) ? val : val.toFixed(1)));
     const card = document.createElement('button');
     card.className = 'kpi';
     card.innerHTML =
@@ -872,47 +876,49 @@ function lastNDays(n) {
   return days;
 }
 
-function weekDates() {
-  const d = new Date();
-  const off = (d.getDay() + 6) % 7;               // Monday = 0
-  d.setDate(d.getDate() - off);
-  const out = [];
-  for (let i = 0; i < 7; i++) { out.push(isoOf(d)); d.setDate(d.getDate() + 1); }
-  return out;
-}
-
 function renderTrends() {
   chartRefs.forEach(c => c.destroy()); chartRefs = [];
   const objs = activeObjectives();
   const days = lastNDays(trRange);
-  const spendMap = txs() ? dailySpendMap() : null;   // Session 4: varspend derived from Transactions
   const values = {};
   objs.forEach(o => {
     const m = {};
-    if (o.kpi_id === 'varspend' && spendMap) Object.assign(m, spendMap);
+    const dcat = derivedCatOf(o);
+    if (dcat && txs()) Object.assign(m, dailyCatMap(dcat));
     else kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
     values[o.kpi_id] = days.map(d => m[d] !== undefined ? m[d] : 0);
   });
 
-  /* weekly totals vs weekly target */
-  const wk = weekDates();
+  /* Achieved vs. target over the selected window (Session 11):
+     target = weekly_target × days/7, else daily_target × days,
+     else (derived spend KPIs) monthly cap × days/30. */
+  const windowTarget = o => {
+    const wt = Number(o.weekly_target) || 0;
+    if (wt) return wt * trRange / 7;
+    const dt = Number(o.daily_target) || 0;
+    if (dt) return dt * trRange;
+    const dcat = derivedCatOf(o);
+    if (dcat && txs()) {
+      const capG = goalRow(dcat === CAT_VAR ? 'varcap' : 'fixedcap');
+      if (capG) return goalTarget(capG) * trRange / 30;
+    }
+    return 0;
+  };
   const wbox = $('#tr-week'); wbox.innerHTML = '';
   for (const o of objs) {
-    const m = {};
-    if (o.kpi_id === 'varspend' && spendMap) Object.assign(m, spendMap);
-    else kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) m[String(r.date)] = Number(r.value) || 0; });
-    const total = wk.reduce((s,d) => s + (m[d] || 0), 0);
-    const wt = Number(o.weekly_target) || 0;
-    const isVar = o.direction === 'lower';
+    const total = values[o.kpi_id].reduce((a,b) => a + b, 0);
+    const wt = windowTarget(o);
+    const isLower = o.direction === 'lower';
     const pct = wt ? Math.min(total / wt, 1) : 0;
-    const over = isVar && wt && total > wt;
+    const over = isLower && wt && total > wt;
     const col = over ? 'var(--red)' : (o.color || 'var(--accent)');
     const div = document.createElement('div');
     div.className = 'wk';
     div.innerHTML = '<div class="l"><span class="n"></span><span class="v"></span></div><div class="bar"><div></div></div>';
     div.querySelector('.n').textContent = o.name;
-    div.querySelector('.v').textContent = (isVar ? money(total) : (Math.round(total*10)/10)) +
-      (wt ? ' / ' + (isVar ? money(wt) : wt + ' ' + o.unit) : ' · no weekly target');
+    div.querySelector('.v').textContent = (isLower ? money(total) : (Math.round(total*10)/10)) +
+      (wt ? ' / ' + (isLower ? money(Math.round(wt*100)/100) : Math.round(wt*10)/10 + ' ' + o.unit) + ' in ' + trRange + 'd'
+          : ' · no target');
     const barIn = div.querySelector('.bar>div');
     barIn.style.width = (wt ? pct*100 : 0) + '%';
     barIn.style.background = col;
@@ -952,10 +958,11 @@ function renderTrends() {
     }
   }
 
-  /* streaks */
+  /* streaks — follow the time filter */
+  $('#tr-streaks-h').textContent = 'Streaks (last ' + trRange + ' days)';
   const sbox = $('#tr-streaks'); sbox.innerHTML = '';
   for (const o of objs) {
-    const s = kpiStreaks(o);
+    const s = kpiStreaks(o, trRange);
     const div = document.createElement('div');
     div.className = 'stk';
     div.innerHTML = '<span class="n"></span><span class="b"></span>';
@@ -1018,16 +1025,24 @@ function varspendMTD() {
   const mk = thisMonthKey();
   return spendSum(txs().filter(t => txMonth(t) === mk && txCat(t).cat === CAT_VAR));
 }
-function dailySpendMap() {
+function fixedMTD() {
+  if (!txs()) return null;
+  const mk = thisMonthKey();
+  return spendSum(txs().filter(t => txMonth(t) === mk && txCat(t).cat === CAT_FIXED));
+}
+/* daily spend by date for one category (Session 11: powers varspend AND fixedcosts KPIs) */
+function dailyCatMap(cat) {
   const m = {};
   (txs() || []).forEach(t => {
-    if (Number(t.amount) < 0 && txCat(t).cat === CAT_VAR) {
+    if (Number(t.amount) < 0 && txCat(t).cat === cat) {
       const d = String(t.date);
       m[d] = (m[d] || 0) + (-Number(t.amount));
     }
   });
   return m;
 }
+/* derived KPIs read the ledger instead of KPI_Log */
+const derivedCatOf = o => o.kpi_id === 'varspend' ? CAT_VAR : o.kpi_id === 'fixedcosts' ? CAT_FIXED : null;
 const recurringRows = () => (payload && payload.recurring) || [];
 function recActive(r, mk) {
   const s = r.start ? String(r.start).slice(0,7) : '';
@@ -1039,7 +1054,11 @@ const goalRow = id => ((payload && payload.goals) || []).find(g => g.goal_id ===
    salary_mult get their target computed live from it — one edit updates them all. */
 const salaryVal = () => Number((goalRow('salary') || {}).current) || 0;
 function goalTarget(g) {
-  const m = Number(g.salary_mult) || 0, s = salaryVal();
+  let m = Number(g.salary_mult) || 0;
+  /* pt-BR decimal trap: "0.6024" typed with a dot becomes 6024 in a pt-BR Sheet.
+     No sane goal is >100 salaries — ignore absurd multipliers, fall back to target. */
+  if (m > 100) m = 0;
+  const s = salaryVal();
   return (m && s) ? m * s : (Number(g.target) || 0);
 }
 const signed = v => (v < 0 ? '−' : '') + money(Math.abs(v));
@@ -1082,11 +1101,22 @@ function renderFinance() {
     if (catTot[c] !== undefined) catTot[c] += -Number(t.amount);
     else unmapped.push(t);
   });
+  /* bars = Achieved vs. Target (Session 11): achieved avg/mo against each category's
+     salary-driven monthly target (varcap / fixedcap / investmonthly) */
   const csum = $('#fi-catsum'); csum.innerHTML = '';
   const maxCat = Math.max(catTot[CAT_VAR], catTot[CAT_FIXED], catTot[CAT_INVEST], 1);
+  const CAT_GOAL = {}; CAT_GOAL[CAT_VAR] = 'varcap'; CAT_GOAL[CAT_FIXED] = 'fixedcap'; CAT_GOAL[CAT_INVEST] = 'investmonthly';
   [[CAT_VAR,'var(--amber)'], [CAT_FIXED,'var(--accent)'], [CAT_INVEST,'var(--green)']].forEach(pair => {
     const v = catTot[pair[0]];
-    csum.appendChild(barRow(pair[0], money(v) + ' · avg ' + money(v / mCount) + '/mo', v / maxCat, pair[1]));
+    const avg = v / mCount;
+    const gR = goalRow(CAT_GOAL[pair[0]]);
+    const tgtMo = gR ? goalTarget(gR) : 0;
+    const isCap = pair[0] !== CAT_INVEST;                 // caps: over = bad · investment: floor
+    const over = isCap && tgtMo && avg > tgtMo;
+    const pct = tgtMo ? avg / tgtMo : v / maxCat;
+    csum.appendChild(barRow(pair[0],
+      money(v) + ' · ' + money(avg) + '/mo vs ' + (tgtMo ? money(tgtMo) : '—') + '/mo',
+      pct, over ? 'var(--red)' : pair[1]));
   });
 
   /* recategorization queue — rows that don't fit the Lançamento scheme (mostly pre-July) */
