@@ -297,6 +297,10 @@
       <div class="set-card" id="sub-list"></div>
       <button class="btn-primary" id="sub-add" style="margin-top:0;">+ Add subscription</button>
 
+      <h2>Categories</h2>
+      <div class="set-card" id="cat-list"></div>
+      <button class="btn-primary" id="cat-add" style="margin-top:0;">+ Add subcategory</button>
+
       <h2>Income & snapshots</h2>
       <div class="set-card">
         <label>Monthly income — salary (R$)</label>
@@ -318,7 +322,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 14 build (v16)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 15 build (v17)</div>
       </div>
     </section>
   </main>
@@ -428,6 +432,7 @@
       <button class="btn-ghost" data-close>Cancel</button>
       <button class="btn-go" id="ob-save">Save objective</button>
     </div>
+    <button id="ob-delete" class="btn-ghost hidden" style="width:100%; margin-top:10px; color:var(--red); border-color:var(--red);">Delete objective</button>
   </div>
 </div>
 
@@ -491,6 +496,26 @@
   </div>
 </div>
 
+<!-- ============ SUBCATEGORY MODAL ============ -->
+<div class="overlay hidden" id="cat-modal">
+  <div class="sheet">
+    <h3 id="cat-title">Subcategory</h3>
+    <div class="sub">Renames and moves rewrite every matching transaction in the Sheet. Subscription auto-posts follow the change automatically.</div>
+    <label>Name</label>
+    <input id="cat-name" type="text" placeholder="e.g. Farmácia">
+    <label>Category</label>
+    <div class="seg" id="cat-cat">
+      <button data-c="Variable Spendings" class="on">Variable</button>
+      <button data-c="Fixed Costs">Fixed</button>
+      <button data-c="Investment">Invest</button>
+    </div>
+    <div class="row2">
+      <button class="btn-ghost" data-close>Cancel</button>
+      <button class="btn-go" id="cat-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ SUBSCRIPTION MODAL ============ -->
 <div class="overlay hidden" id="sub-modal">
   <div class="sheet">
@@ -532,10 +557,31 @@
 /* ================= constants / storage ================= */
 /* Session 8: 3-level category scheme — category + subcategory columns in Transactions. */
 const CAT_VAR = 'Variable Spendings', CAT_FIXED = 'Fixed Costs', CAT_INVEST = 'Investment';
-const SUBCATS = {};
-SUBCATS[CAT_VAR]    = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Subscriptions','Other'];
-SUBCATS[CAT_FIXED]  = ['Conta de Internet','Conta de Luz','Dízimo','Conta de Água','Transportation','Health & Insurance','Education'];
-SUBCATS[CAT_INVEST] = ['Renda Fixa','Renda Variável'];
+const TOP_CATS = [CAT_VAR, CAT_FIXED, CAT_INVEST];
+const DEFAULT_SUBCATS = {};
+DEFAULT_SUBCATS[CAT_VAR]    = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Subscriptions','Other'];
+DEFAULT_SUBCATS[CAT_FIXED]  = ['Conta de Internet','Conta de Luz','Dízimo','Conta de Água','Transportation','Health & Insurance','Education'];
+DEFAULT_SUBCATS[CAT_INVEST] = ['Renda Fixa','Renda Variável'];
+/* Session 15: taxonomy is data — Categories tab rows {name, category, role};
+   falls back to the defaults above until the API sends the tab. */
+const catRows = () => (payload && payload.categories) || [];
+function subcatList(cat) {
+  const list = catRows().filter(r => String(r.category) === cat).map(r => String(r.name));
+  return list.length ? list : (DEFAULT_SUBCATS[cat] || []);
+}
+const subsSubName = () => {
+  const r = catRows().find(x => String(x.role || '').toLowerCase() === 'subscriptions');
+  return r ? String(r.name) : 'Subscriptions';
+};
+/* first edit before the sheet tab exists: mirror the defaults locally */
+function ensureLocalCats() {
+  if (!payload) return;
+  if (!(payload.categories || []).length) {
+    payload.categories = [];
+    TOP_CATS.forEach(c => DEFAULT_SUBCATS[c].forEach(n =>
+      payload.categories.push({ name: n, category: c, role: n === 'Subscriptions' ? 'subscriptions' : '' })));
+  }
+}
 /* legacy (pre-migration) category → [category, subcategory] */
 const LEGACY_MAP = {
   'Food & Dining':[CAT_VAR,'Food & Dining'], 'Groceries':[CAT_VAR,'Groceries'],
@@ -686,13 +732,15 @@ function streak() {
   return n;
 }
 
-/* per-KPI: a day "qualifies" only if the daily TARGET was met (Session 10) —
-   higher: v >= target (or v > 0 when no target set) · lower: v <= target */
+/* per-KPI: a day "qualifies" only if the daily TARGET was met —
+   higher: v >= target (or v > 0 when no target set)
+   lower (Session 15): v <= target, and WITHOUT a target the day never counts —
+   an over-the-limit day must break the streak, not extend it. */
 function kpiQualifies(o, r) {
   if (!r) return false;
   const v = Number(r.value) || 0;
   const t = Number(o.daily_target) || 0;
-  if (o.direction === 'lower') return t ? v <= t : true;
+  if (o.direction === 'lower') return t ? v <= t : false;
   return t ? v >= t : v > 0;
 }
 function kpiStreaks(o, n) {
@@ -706,8 +754,15 @@ function kpiStreaks(o, n) {
   } else {
     kpiRows().forEach(r => { if (r.kpi_id === o.kpi_id) map[String(r.date)] = r; });
   }
-  const q = iso => derived ? kpiQualifies(o, map[iso] || { value: 0 })   // no spend that day = under cap
-                           : kpiQualifies(o, map[iso]);
+  /* derived spend KPIs without a daily target: threshold = monthly cap / 30 (Session 15) */
+  let eff = o;
+  if (derived && !Number(o.daily_target)) {
+    const capG = goalRow(dcat === CAT_VAR ? 'varcap' : 'fixedcap');
+    const cap = capG ? goalTarget(capG) : 0;
+    if (cap) eff = Object.assign({}, o, { daily_target: cap / 30 });
+  }
+  const q = iso => derived ? kpiQualifies(eff, map[iso] || { value: 0 })   // no spend that day = under cap
+                           : kpiQualifies(eff, map[iso]);
   let best = 0, run = 0;
   for (let i = n - 1; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
@@ -1145,7 +1200,7 @@ function renderFinance() {
     fbox.appendChild(b);
   });
   const subRowsW = winRows.filter(t => txCat(t).cat === fiSubCat);
-  const subNames = SUBCATS[fiSubCat].slice();
+  const subNames = subcatList(fiSubCat).slice();
   subRowsW.forEach(t => { const s = txCat(t).sub || '—'; if (!subNames.includes(s)) subNames.push(s); });
   const series = {};
   subNames.forEach(s => series[s] = months.map(() => 0));
@@ -1291,7 +1346,7 @@ let currentTx = null, txCatSel = CAT_VAR, txSubSel = null, txMethodSel = 'pix', 
 
 function renderTxSubcats() {
   const box = $('#tx-subcats'); box.innerHTML = '';
-  for (const c of SUBCATS[txCatSel]) {
+  for (const c of subcatList(txCatSel)) {
     const b = document.createElement('button');
     b.textContent = c;
     b.classList.toggle('on', txSubSel === c);
@@ -1329,8 +1384,8 @@ function openTxModal(t) {
   $('#tx-amount').value = Math.abs(Number(t.amount) || 0);
   $('#tx-date').value = String(t.date).slice(0, 10);
   const tc = txCat(t);
-  txCatSel = SUBCATS[tc.cat] ? tc.cat : CAT_VAR;
-  txSubSel = SUBCATS[txCatSel].includes(tc.sub) ? tc.sub : null;
+  txCatSel = TOP_CATS.includes(tc.cat) ? tc.cat : CAT_VAR;
+  txSubSel = subcatList(txCatSel).includes(tc.sub) ? tc.sub : null;
   document.querySelectorAll('#tx-cat button').forEach(x => x.classList.toggle('on', x.dataset.c === txCatSel));
   renderTxSubcats();
   txMethodSel = t.method === 'credit' ? 'credit' : 'pix';
@@ -1433,6 +1488,8 @@ function renderSettings() {
     bq.appendChild(row);
   }
 
+  renderCatList();
+
   /* income prefill (don't clobber while typing) */
   if (document.activeElement !== $('#inc-salary') && !$('#inc-salary').value && salaryVal()) {
     $('#inc-salary').value = salaryVal();
@@ -1454,6 +1511,77 @@ function renderSettings() {
     sl.appendChild(row);
   }
 }
+
+/* ---------- subcategory editor (Session 15) ---------- */
+let currentCat = null, catCatSel = CAT_VAR;
+
+function renderCatList() {
+  const box = $('#cat-list'); box.innerHTML = '';
+  for (const c of TOP_CATS) {
+    const head = document.createElement('div');
+    head.className = 'mono';
+    head.style.margin = '8px 0 2px';
+    head.textContent = c;
+    box.appendChild(head);
+    for (const name of subcatList(c)) {
+      const r = catRows().find(x => String(x.name) === name && String(x.category) === c);
+      const row = document.createElement('button');
+      row.className = 'ob-row';
+      row.innerHTML = '<span class="m"><div class="n"></div></span><span>✏️</span>';
+      row.querySelector('.n').textContent = name +
+        (r && String(r.role || '').toLowerCase() === 'subscriptions' ? ' · auto-post target' : '');
+      row.addEventListener('click', () => openCatModal({ name, category: c }));
+      box.appendChild(row);
+    }
+  }
+}
+
+function setCatSeg(c) {
+  catCatSel = c;
+  document.querySelectorAll('#cat-cat button').forEach(x => x.classList.toggle('on', x.dataset.c === c));
+}
+$('#cat-cat').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  setCatSeg(b.dataset.c);
+});
+function openCatModal(c) {              // c = null → new subcategory
+  currentCat = c;
+  $('#cat-title').textContent = c ? 'Edit subcategory' : 'New subcategory';
+  $('#cat-name').value = c ? c.name : '';
+  setCatSeg(c ? c.category : CAT_VAR);
+  $('#cat-modal').classList.remove('hidden');
+  if (!c) setTimeout(() => $('#cat-name').focus(), 150);
+}
+$('#cat-add').addEventListener('click', () => openCatModal(null));
+
+$('#cat-save').addEventListener('click', async () => {
+  const name = $('#cat-name').value.trim();
+  if (!name) { toast('Name is required'); return; }
+  const isNew = !currentCat;
+  const oldName = isNew ? name : currentCat.name;
+  const taken = TOP_CATS.some(c => subcatList(c).some(n =>
+    n.trim().toLowerCase() === name.toLowerCase() && (isNew || n !== currentCat.name)));
+  if (taken) { toast('This subcategory already exists'); return; }
+  const p = { name: oldName, category: catCatSel };
+  if (!isNew && name !== oldName) p.new_name = name;
+  $('#cat-modal').classList.add('hidden');
+
+  /* local mirror: taxonomy + every cached transaction follows the change */
+  ensureLocalCats();
+  const rows = catRows();
+  const r = rows.find(x => String(x.name).trim().toLowerCase() === oldName.trim().toLowerCase());
+  if (r) { r.name = name; r.category = catCatSel; }
+  else rows.push({ name, category: catCatSel, role: '' });
+  (txs() || []).forEach(t => {
+    if (String(t.subcategory || '').trim().toLowerCase() === oldName.trim().toLowerCase()) {
+      t.subcategory = name;
+      t.category = catCatSel;
+    }
+  });
+  if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
+  render();
+  if (await apiPost('update_subcategory', p)) toast(name + ' saved — Sheet rewritten ✓');
+});
 
 /* ---------- income & snapshots (Session 10) ---------- */
 $('#inc-save').addEventListener('click', async () => {
@@ -1551,8 +1679,31 @@ function openObjModal(o) {
   $('#ob-sort').value = o ? (o.sort || 0) : allObjectives().length + 1;
   $('#ob-color').value = (o && /^#[0-9A-Fa-f]{6}$/.test(o.color)) ? o.color : '#8B5CF6';
   $('#ob-active').checked = o ? isActive(o) : true;
+  obDeleteArmed = false;
+  $('#ob-delete').textContent = 'Delete objective';
+  $('#ob-delete').classList.toggle('hidden', !o);   // only existing objectives can be deleted
   $('#obj-modal').classList.remove('hidden');
 }
+
+/* delete with double confirmation (Session 15) — KPI_Log history stays in the Sheet */
+let obDeleteArmed = false;
+$('#ob-delete').addEventListener('click', async () => {
+  const kpi_id = $('#ob-kpiid').value.trim();
+  if (!kpi_id) return;
+  if (!obDeleteArmed) {
+    obDeleteArmed = true;
+    $('#ob-delete').textContent = 'Tap again to delete "' + kpi_id + '"';
+    return;
+  }
+  $('#obj-modal').classList.add('hidden');
+  if (payload && payload.objectives) {
+    payload.objectives = payload.objectives.filter(o => o.kpi_id !== kpi_id);
+    localStorage.setItem(LS.cache, JSON.stringify(payload));
+  }
+  render();
+  if (await apiPost('delete_objective', { kpi_id }, { noQueueOnReject: true })) toast('Objective deleted ✓');
+  else refresh(false);
+});
 $('#ob-add').addEventListener('click', () => openObjModal(null));
 $('#ob-save').addEventListener('click', async () => {
   const kpi_id = $('#ob-kpiid').value.trim().toLowerCase();
@@ -1730,7 +1881,7 @@ for (let i = 1; i <= 12; i++) {
   o.value = i; o.textContent = i === 1 ? '1x (à vista)' : i + 'x';
   instSel.appendChild(o);
 }
-const isSubSpend = () => spendSub === 'Subscriptions';
+const isSubSpend = () => spendSub === subsSubName();
 function syncInstVisibility() {
   /* subscriptions are monthly by nature — no installments */
   $('#sp-inst-wrap').classList.toggle('hidden', spendMethod !== 'credit' || isSubSpend());
@@ -1757,7 +1908,7 @@ $('#fab').addEventListener('click', openSpend);
 /* Session 8: subcategory chips depend on the selected category */
 function renderSpendSubs() {
   const catBox = $('#sp-cats'); catBox.innerHTML = '';
-  for (const c of SUBCATS[spendCatSel]) {
+  for (const c of subcatList(spendCatSel)) {
     const b = document.createElement('button');
     b.textContent = c;
     b.classList.toggle('on', spendSub === c);
