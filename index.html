@@ -250,7 +250,8 @@
       <div class="seg" id="fi-method" style="margin-top:16px;">
         <button data-m="all" class="on">All</button>
         <button data-m="pix">PIX</button>
-        <button data-m="credit">Credit</button>
+        <button data-m="debit">Débito</button>
+        <button data-m="credit">Crédito</button>
       </div>
       <div class="set-card" style="text-align:center;">
         <div style="font-size:1.8rem; font-weight:700;" id="fi-total-v">—</div>
@@ -322,7 +323,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 15 build (v17)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 16 build (v18)</div>
       </div>
     </section>
   </main>
@@ -376,7 +377,8 @@
     <input id="sp-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00">
     <div class="seg" id="sp-method">
       <button data-m="pix" class="on">PIX</button>
-      <button data-m="credit">Credit card</button>
+      <button data-m="debit">Débito</button>
+      <button data-m="credit">Crédito</button>
     </div>
     <div id="sp-inst-wrap" class="hidden">
       <label>Installments (amount above = total price)</label>
@@ -486,7 +488,8 @@
     <div class="chips" id="tx-subcats"></div>
     <div class="seg" id="tx-method">
       <button data-m="pix">PIX</button>
-      <button data-m="credit">Credit card</button>
+      <button data-m="debit">Débito</button>
+      <button data-m="credit">Crédito</button>
     </div>
     <div class="row2">
       <button class="btn-ghost" data-close>Cancel</button>
@@ -528,7 +531,8 @@
       <div><label>Billing day (1–28)</label><input id="sub-day" type="number" inputmode="numeric" min="1" max="28"></div>
     </div>
     <div class="seg" id="sub-method" style="margin-top:14px;">
-      <button data-m="credit" class="on">Credit card</button>
+      <button data-m="credit" class="on">Crédito</button>
+      <button data-m="debit">Débito</button>
       <button data-m="pix">PIX</button>
     </div>
     <div class="check"><input id="sub-active" type="checkbox" checked><label style="margin:0;">ACTIVE — auto-posts every month</label></div>
@@ -1129,7 +1133,8 @@ function renderFinance() {
 
   /* month total for the selected method */
   $('#fi-total-v').textContent = money(spendSum(mtdRows));
-  $('#fi-total-s').textContent = (finMethod === 'all' ? 'All methods' : finMethod === 'pix' ? 'PIX' : 'Credit card') + ' · spent in ' + mk;
+  const methodLabel = { all: 'All methods', pix: 'PIX', debit: 'Débito', credit: 'Crédito' };
+  $('#fi-total-s').textContent = (methodLabel[finMethod] || finMethod) + ' · spent in ' + mk;
 
   /* ============ Spending explorer (Session 10) — PBI-style ============ */
   const months = finWindowMonths();
@@ -1388,7 +1393,7 @@ function openTxModal(t) {
   txSubSel = subcatList(txCatSel).includes(tc.sub) ? tc.sub : null;
   document.querySelectorAll('#tx-cat button').forEach(x => x.classList.toggle('on', x.dataset.c === txCatSel));
   renderTxSubcats();
-  txMethodSel = t.method === 'credit' ? 'credit' : 'pix';
+  txMethodSel = ['credit', 'debit', 'pix'].includes(t.method) ? t.method : 'pix';
   document.querySelectorAll('#tx-method button').forEach(x => x.classList.toggle('on', x.dataset.m === txMethodSel));
   $('#tx-modal').classList.remove('hidden');
 }
@@ -1627,7 +1632,7 @@ function openSubModal(s) {            // s = null → new subscription
   $('#sub-name').value = s ? s.name : '';
   $('#sub-amount').value = s ? (Number(s.amount) || '') : '';
   $('#sub-day').value = s ? (Number(s.billing_day) || '') : '';
-  setSubMethodSeg(s && s.method === 'pix' ? 'pix' : 'credit');
+  setSubMethodSeg(s && ['pix', 'debit', 'credit'].includes(s.method) ? s.method : 'credit');
   $('#sub-active').checked = s ? String(s.status || '').toUpperCase() === 'ACTIVE' : true;
   $('#sub-charged').checked = false;
   $('#sub-charged-wrap').classList.toggle('hidden', !!s && String(s.last_posted || '').slice(0, 7) === todayISO().slice(0, 7));
