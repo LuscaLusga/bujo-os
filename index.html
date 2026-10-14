@@ -146,6 +146,24 @@
   .wk .l{display:flex; justify-content:space-between; font-size:.85rem; margin-bottom:7px;}
   .wk .l .v{font-variant-numeric:tabular-nums; color:var(--dim);}
   .wk.sel{box-shadow:0 0 0 1px var(--accent), 0 0 14px rgba(139,92,246,.4);}
+  /* Session 18: subscriptions */
+  .subline{display:flex; justify-content:space-between; gap:10px; font-size:.8rem; color:var(--dim);
+    padding:3px 14px 7px 22px; margin-top:-4px; cursor:pointer;}
+  .subline .v{font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .subsum{display:flex; justify-content:space-between; font-size:.82rem; color:var(--dim); margin-bottom:10px; gap:8px; flex-wrap:wrap;}
+  .subsum b{color:var(--text); font-weight:600;}
+  .subr{display:flex; align-items:center; gap:10px; padding:10px 2px; border-bottom:1px solid var(--line); cursor:pointer;}
+  .subr:last-of-type{border-bottom:0;}
+  .subr .m{flex:1; min-width:0;}
+  .subr .n{font-size:.9rem; font-weight:600;}
+  .subr .d{font-size:.74rem; color:var(--dim); margin-top:2px;}
+  .subr .a{font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap; font-size:.9rem;}
+  .pill{display:inline-block; border-radius:999px; padding:1px 8px; font-size:.68rem; font-weight:700; margin-left:6px; vertical-align:1px;}
+  .pill.ok{background:rgba(16,185,129,.15); color:var(--green);}
+  .pill.wait{background:rgba(245,158,11,.15); color:var(--amber);}
+  .pill.due{background:rgba(239,68,68,.15); color:var(--red);}
+  .subr .go{background:var(--card2); border:1px solid var(--line); border-radius:9px; padding:6px 10px; font-size:.74rem; font-weight:600; white-space:nowrap;}
+  .subr.off{opacity:.45;}
   .bar{height:8px; background:var(--card2); border-radius:99px; overflow:hidden;}
   .bar>div{height:100%; border-radius:99px; transition:width .4s;}
   .stk{display:flex; justify-content:space-between; background:var(--card);
@@ -279,6 +297,9 @@
       <div class="set-card" id="fi-split"></div>
       <h2>This month’s transactions</h2>
       <div id="fi-txs"></div>
+      <h2>This month’s subscriptions</h2>
+      <div class="set-card" id="fi-subs"></div>
+      <button class="btn-primary" id="fi-sub-add" style="margin-top:0;">+ Add subscription</button>
     </section>
 
     <!-- SETTINGS -->
@@ -323,7 +344,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 17 build (v19)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 18 build (v20)</div>
       </div>
     </section>
   </main>
@@ -523,7 +544,7 @@
 <div class="overlay hidden" id="sub-modal">
   <div class="sheet">
     <h3 id="sub-title">Subscription</h3>
-    <div class="sub">ACTIVE subs auto-post to Transactions monthly on their billing day (Variable Spendings · Subscriptions) — no manual input.</div>
+    <div class="sub" id="sub-help">ACTIVE subs auto-post to Transactions monthly on their billing day — no manual input.</div>
     <label>Name</label>
     <input id="sub-name" type="text" placeholder="e.g. Spotify">
     <div class="cols">
@@ -541,6 +562,7 @@
       <button class="btn-ghost" data-close>Cancel</button>
       <button class="btn-go" id="sub-save">Save</button>
     </div>
+    <button id="sub-delete" class="btn-ghost hidden" style="width:100%; margin-top:10px; color:var(--red); border-color:var(--red);">Delete subscription</button>
   </div>
 </div>
 
@@ -563,8 +585,8 @@
 const CAT_VAR = 'Variable Spendings', CAT_FIXED = 'Fixed Costs', CAT_INVEST = 'Investment';
 const TOP_CATS = [CAT_VAR, CAT_FIXED, CAT_INVEST];
 const DEFAULT_SUBCATS = {};
-DEFAULT_SUBCATS[CAT_VAR]    = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Subscriptions','Other'];
-DEFAULT_SUBCATS[CAT_FIXED]  = ['Conta de Internet','Conta de Luz','Dízimo','Conta de Água','Transportation','Health & Insurance','Education'];
+DEFAULT_SUBCATS[CAT_VAR]    = ['Food & Dining','Groceries','Entertainment','Shopping','Pet','Other'];
+DEFAULT_SUBCATS[CAT_FIXED]  = ['Conta de Internet','Conta de Luz','Dízimo','Conta de Água','Transportation','Subscriptions','Health & Insurance','Education'];
 DEFAULT_SUBCATS[CAT_INVEST] = ['Renda Fixa','Renda Variável'];
 /* Session 15: taxonomy is data — Categories tab rows {name, category, role};
    falls back to the defaults above until the API sends the tab. */
@@ -577,6 +599,26 @@ const subsSubName = () => {
   const r = catRows().find(x => String(x.role || '').toLowerCase() === 'subscriptions');
   return r ? String(r.name) : 'Subscriptions';
 };
+/* Session 18: category the subscriptions subcategory lives in (Fixed Costs by default) */
+const subsCatOf = () => {
+  const r = catRows().find(x => String(x.role || '').toLowerCase() === 'subscriptions');
+  return r ? String(r.category) : CAT_FIXED;
+};
+const subsRows = () => (payload && payload.subscriptions) || [];
+const subIsActive = s => String(s.status || '').trim().toUpperCase() === 'ACTIVE';
+/* this month's charge for a subscription: a ledger row under the subscriptions subcategory
+   whose description contains the name, or last_posted in this month (same rule as the API) */
+function subChargeThisMonth(s) {
+  const mk = todayISO().slice(0, 7), key = String(s.name || '').trim().toLowerCase();
+  const t = (txs() || []).find(t => String(t.date).slice(0, 7) === mk &&
+    String(t.subcategory || '').trim().toLowerCase() === subsSubName().toLowerCase() &&
+    String(t.description || '').toLowerCase().indexOf(key) !== -1);
+  if (t) return { date: String(t.date), amount: Math.abs(Number(t.amount) || 0), tx: t };
+  if (String(s.last_posted || '').slice(0, 7) === mk) return { date: String(s.last_posted), amount: null, tx: null };
+  return null;
+}
+/* ACTIVE subscriptions not yet charged this month → projected cost */
+const pendingSubs = () => subsRows().filter(s => subIsActive(s) && !subChargeThisMonth(s));
 /* first edit before the sheet tab exists: mirror the defaults locally */
 function ensureLocalCats() {
   if (!payload) return;
@@ -591,7 +633,7 @@ const LEGACY_MAP = {
   'Food & Dining':[CAT_VAR,'Food & Dining'], 'Groceries':[CAT_VAR,'Groceries'],
   'Entertainment':[CAT_VAR,'Entertainment'], 'Shopping':[CAT_VAR,'Shopping'],
   'Pet':[CAT_VAR,'Pet'], 'Transportation':[CAT_FIXED,'Transportation'],
-  'Subscriptions':[CAT_VAR,'Subscriptions'], 'Other':[CAT_VAR,'Other'],
+  'Subscriptions':[CAT_FIXED,'Subscriptions'], 'Other':[CAT_VAR,'Other'],
   'Investments':[CAT_INVEST,''],
   'Donations & Charity':[CAT_FIXED,'Dízimo'], 'Health & Insurance':[CAT_FIXED,'Health & Insurance'],
   'Education':[CAT_FIXED,'Education'], 'Father - CC & Bills':[CAT_FIXED,'Father - CC & Bills']
@@ -1173,6 +1215,13 @@ function renderFinance() {
     if (catTot[c] !== undefined) catTot[c] += -Number(t.amount);
     else unmapped.push(t);
   });
+  /* Session 18: ACTIVE subscriptions not yet charged this month count as projected cost
+     of the current month (they WILL be charged) — shown as "previsto" everywhere */
+  const curIdx = months.indexOf(mk);
+  const pend = curIdx > -1 ? pendingSubs().filter(s => finMethod === 'all' || (s.method || 'credit') === finMethod) : [];
+  const pendTot = pend.reduce((a, s) => a + Math.abs(Number(s.amount) || 0), 0);
+  const SUBS_CAT = subsCatOf(), SUBS_SUB = subsSubName();
+  if (pendTot && catTot[SUBS_CAT] !== undefined) catTot[SUBS_CAT] += pendTot;
   /* bars = Achieved vs. Target (Session 11): achieved avg/mo against each category's
      salary-driven monthly target (varcap / fixedcap / investmonthly) */
   const csum = $('#fi-catsum'); csum.innerHTML = '';
@@ -1187,7 +1236,8 @@ function renderFinance() {
     const over = isCap && tgtMo && avg > tgtMo;
     const pct = tgtMo ? avg / tgtMo : v / maxCat;
     csum.appendChild(barRow(pair[0],
-      money(v) + ' · ' + money(avg) + '/mo vs ' + (tgtMo ? money(tgtMo) : '—') + '/mo',
+      money(v) + ' · ' + money(avg) + '/mo vs ' + (tgtMo ? money(tgtMo) : '—') + '/mo' +
+      (pendTot && pair[0] === SUBS_CAT ? ' · incl. ' + money(pendTot) + ' previsto' : ''),
       pct, over ? 'var(--red)' : pair[1]));
   });
 
@@ -1238,13 +1288,21 @@ function renderFinance() {
     const mi = months.indexOf(txMonth(t));
     if (mi > -1) series[s][mi] += -Number(t.amount);
   });
+  /* Session 18: projected (not yet charged) subscriptions → own stacked segment */
+  const PEND_KEY = SUBS_SUB + ' (previsto)';
+  const showPend = fiSubCat === SUBS_CAT && pendTot > 0;
+  if (showPend) { subNames.push(PEND_KEY); series[PEND_KEY] = months.map((_, i) => i === curIdx ? pendTot : 0); }
   $('#fi-sub-n').textContent = fiSubCat;
   $('#fi-sub-s').textContent = mCount + (mCount === 1 ? ' month' : ' months');
   if (fiSubChartRef) { fiSubChartRef.destroy(); fiSubChartRef = null; }
   if (typeof Chart !== 'undefined') {
     const PALETTE = ['#8B5CF6','#10B981','#F59E0B','#EF4444','#3B82F6','#EC4899','#14B8A6','#F97316','#A3E635','#94A3B8'];
     const datasets = subNames.filter(s => series[s].some(v => v > 0)).map((s, i) => ({
-      label: s, data: series[s], backgroundColor: PALETTE[i % PALETTE.length] + 'CC', stack: 'a', borderRadius: 2
+      label: s, data: series[s], stack: 'a', borderRadius: 2,
+      backgroundColor: s === PEND_KEY ? 'rgba(154,164,178,.35)' : PALETTE[i % PALETTE.length] + 'CC',
+      borderColor: s === PEND_KEY ? '#9AA4B2' : undefined,
+      borderWidth: s === PEND_KEY ? 1 : 0,
+      borderDash: s === PEND_KEY ? [3, 3] : undefined
     }));
     fiSubChartRef = new Chart($('#fi-subchart'), {
       type: 'bar',
@@ -1260,18 +1318,51 @@ function renderFinance() {
     });
   }
   const ssum = $('#fi-subsum'); ssum.innerHTML = '';
-  const totals = subNames.map(s => [s, series[s].reduce((a,b) => a + b, 0)])
+  /* the projected segment is merged into the subscriptions row (not a row of its own) */
+  const totals = subNames.filter(s => s !== PEND_KEY)
+    .map(s => [s, series[s].reduce((a,b) => a + b, 0) + (s === SUBS_SUB && showPend ? pendTot : 0)])
     .filter(x => x[1] > 0).sort((a,b) => b[1] - a[1]);
+  if (showPend && !totals.some(x => x[0] === SUBS_SUB)) totals.push([SUBS_SUB, pendTot]);
   if (!totals.length) ssum.innerHTML = '<div class="empty">No ' + fiSubCat + ' spending in this window.</div>';
   if (fiSubSel && !totals.some(x => x[0] === fiSubSel)) fiSubSel = null;   // stale selection
-  const maxS = totals.length ? totals[0][1] : 1;
+  const maxS = totals.length ? Math.max.apply(null, totals.map(x => x[1])) : 1;
   totals.forEach(x => {
     /* Session 13: tap a subcategory row → glow + filter This month's transactions; tap again to clear */
-    const row = barRow(x[0], money(x[1]) + ' · avg ' + money(x[1] / mCount) + '/mo', x[1] / maxS, 'var(--accent)');
+    const isSubsRow = x[0] === SUBS_SUB;
+    const row = barRow(x[0], money(x[1]) + ' · avg ' + money(x[1] / mCount) + '/mo' +
+      (isSubsRow && showPend ? ' · incl. ' + money(pendTot) + ' previsto' : ''), x[1] / maxS, 'var(--accent)');
     row.classList.toggle('sel', fiSubSel === x[0]);
     row.style.cursor = 'pointer';
     row.addEventListener('click', () => { fiSubSel = fiSubSel === x[0] ? null : x[0]; renderFinance(); });
     ssum.appendChild(row);
+
+    /* Session 18: each subscription as its own line under the subscriptions subcategory */
+    if (isSubsRow) {
+      const per = {};
+      subRowsW.filter(t => txCat(t).sub === SUBS_SUB).forEach(t => {
+        const d = String(t.description || '').toLowerCase();
+        const s = subsRows().find(s => s.name && d.indexOf(String(s.name).trim().toLowerCase()) !== -1);
+        const k = s ? String(s.name) : 'Outras';
+        per[k] = per[k] || { paid: 0, pend: 0, sub: s || null };
+        per[k].paid += -Number(t.amount);
+      });
+      if (showPend) pend.forEach(s => {
+        const k = String(s.name);
+        per[k] = per[k] || { paid: 0, pend: 0, sub: s };
+        per[k].pend += Math.abs(Number(s.amount) || 0);
+      });
+      Object.keys(per).sort((a, b) => (per[b].paid + per[b].pend) - (per[a].paid + per[a].pend)).forEach(k => {
+        const v = per[k];
+        const line = document.createElement('div');
+        line.className = 'subline';
+        line.innerHTML = '<span class="n"></span><span class="v"></span>';
+        line.querySelector('.n').textContent = '↳ ' + k;
+        line.querySelector('.v').textContent = money(v.paid + v.pend) +
+          (v.pend ? (v.paid ? ' (' + money(v.pend) + ' previsto)' : ' · previsto') : '');
+        if (v.sub) line.addEventListener('click', () => openSubModal(v.sub));
+        ssum.appendChild(line);
+      });
+    }
   });
 
   /* goals: R$ + %, invest10k first; monthly caps computed live
@@ -1369,7 +1460,97 @@ function renderFinance() {
     div.addEventListener('click', () => openTxModal(t));
     tbox.appendChild(div);
   }
+
+  renderSubsSection();
 }
+
+/* ---------- This month's subscriptions (Session 18) ---------- */
+let fiShowPaused = false;
+function renderSubsSection() {
+  const box = $('#fi-subs'); box.innerHTML = '';
+  const all = subsRows();
+  const active = all.filter(subIsActive)
+    .sort((a, b) => (Number(a.billing_day) || 1) - (Number(b.billing_day) || 1));
+  const paused = all.filter(s => !subIsActive(s));
+  if (!all.length) {
+    box.innerHTML = '<div class="empty">No subscriptions yet. Add one below — ACTIVE ones post to ' +
+      subsCatOf() + ' · ' + subsSubName() + ' every month on their billing day.</div>';
+    return;
+  }
+  const today = new Date().getDate();
+  let paid = 0, due = 0;
+  const rowsHtml = [];
+  for (const s of active) {
+    const amt = Math.abs(Number(s.amount) || 0);
+    const ch = subChargeThisMonth(s);
+    const day = Math.min(Math.max(parseInt(s.billing_day, 10) || 1, 1), 28);
+    if (ch) paid += (ch.amount !== null ? ch.amount : amt); else due += amt;
+    rowsHtml.push({ s, amt, ch, day, late: !ch && today >= day });
+  }
+
+  const sum = document.createElement('div');
+  sum.className = 'subsum';
+  sum.innerHTML = '<span>Cobradas <b></b></span><span>Previstas <b></b></span><span>Total <b></b>/mês</span>';
+  const bs = sum.querySelectorAll('b');
+  bs[0].textContent = money(paid); bs[1].textContent = money(due); bs[2].textContent = money(paid + due);
+  box.appendChild(sum);
+
+  const methodName = { credit: 'crédito', debit: 'débito', pix: 'PIX' };
+  for (const r of rowsHtml) {
+    const el = document.createElement('div');
+    el.className = 'subr';
+    el.innerHTML = '<div class="m"><div class="n"></div><div class="d"></div></div><div class="a"></div>';
+    const pill = document.createElement('span');
+    pill.className = 'pill ' + (r.ch ? 'ok' : r.late ? 'due' : 'wait');
+    pill.textContent = r.ch ? 'cobrada' : r.late ? 'pendente' : 'prevista';
+    el.querySelector('.n').textContent = r.s.name;
+    el.querySelector('.n').appendChild(pill);
+    el.querySelector('.d').textContent = 'dia ' + r.day + ' · ' + (methodName[r.s.method] || r.s.method || 'crédito') +
+      (r.ch ? ' · lançada ' + r.ch.date.slice(8, 10) + '/' + r.ch.date.slice(5, 7)
+            : r.late ? ' · ainda não lançada' : ' · cobra em ' + (r.day - today) + 'd');
+    el.querySelector('.a').textContent = money(r.amt);
+    el.addEventListener('click', () => openSubModal(r.s));
+    if (!r.ch) {   // quick action: charge now (works even if the daily trigger never ran)
+      const go = document.createElement('button');
+      go.className = 'go';
+      go.textContent = 'Lançar agora';
+      go.addEventListener('click', ev => { ev.stopPropagation(); chargeSubNow(r.s); });
+      el.appendChild(go);
+    }
+    box.appendChild(el);
+  }
+
+  if (paused.length) {
+    const link = document.createElement('button');
+    link.className = 'cal-done-link';
+    link.textContent = fiShowPaused ? 'Ocultar pausadas' : paused.length + (paused.length === 1 ? ' pausada' : ' pausadas') + ' — mostrar';
+    link.addEventListener('click', () => { fiShowPaused = !fiShowPaused; renderSubsSection(); });
+    box.appendChild(link);
+    if (fiShowPaused) paused.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'subr off';
+      el.innerHTML = '<div class="m"><div class="n"></div><div class="d"></div></div><div class="a"></div>';
+      el.querySelector('.n').textContent = s.name;
+      el.querySelector('.d').textContent = 'pausada · toque para reativar';
+      el.querySelector('.a').textContent = money(Math.abs(Number(s.amount) || 0));
+      el.addEventListener('click', () => openSubModal(s));
+      box.appendChild(el);
+    });
+  }
+}
+
+/* charge one subscription for this month right now (server dedupes: never double-charges) */
+async function chargeSubNow(s) {
+  if (subChargeThisMonth(s)) { toast(s.name + ' já foi lançada este mês'); return; }
+  const amt = Math.abs(Number(s.amount) || 0);
+  if (txs()) txs().push({ date: todayISO(), description: s.name + ' (subscription)', amount: -amt,
+    category: subsCatOf(), subcategory: subsSubName(), source: 'auto', method: s.method || 'credit', review_flag: '' });
+  s.last_posted = todayISO();
+  if (payload) localStorage.setItem(LS.cache, JSON.stringify(payload));
+  render();
+  if (await apiPost('charge_subscription', { name: s.name })) toast(s.name + ' lançada · ' + money(amt) + ' ✓');
+}
+$('#fi-sub-add').addEventListener('click', () => openSubModal(null));
 
 /* ---------- transaction edit/delete modal (Session 9) ---------- */
 let currentTx = null, txCatSel = CAT_VAR, txSubSel = null, txMethodSel = 'pix', txDeleteArmed = false;
@@ -1528,15 +1709,15 @@ function renderSettings() {
   /* subscriptions */
   const sl = $('#sub-list'); sl.innerHTML = '';
   const subs = (payload && payload.subscriptions) || [];
-  if (!subs.length) sl.innerHTML = '<div class="empty">No subscriptions yet. ACTIVE ones auto-post monthly (needs the Session 8 Code.gs + trigger).</div>';
+  if (!subs.length) sl.innerHTML = '<div class="empty">No subscriptions yet. ACTIVE ones post monthly on their billing day.</div>';
   for (const s of subs) {
-    const on = String(s.status || '').toUpperCase() === 'ACTIVE';
+    const on = subIsActive(s);
     const row = document.createElement('button');
     row.className = 'ob-row' + (on ? '' : ' off');
     row.innerHTML = '<span class="m"><div class="n"></div><div class="d"></div></span><span>✏️</span>';
-    row.querySelector('.n').textContent = s.name + (on ? '' : ' (inactive)');
+    row.querySelector('.n').textContent = s.name + (on ? '' : ' (paused)');
     row.querySelector('.d').textContent = money(s.amount) + ' · day ' + (s.billing_day || '?') +
-      ' · ' + (s.method || 'credit') + (s.last_posted ? ' · last ' + String(s.last_posted).slice(0, 10) : '');
+      ' · ' + (s.method || 'credit') + (on ? (subChargeThisMonth(s) ? ' · ✓ charged this month' : ' · ⏳ due this month') : '');
     row.addEventListener('click', () => openSubModal(s));
     sl.appendChild(row);
   }
@@ -1660,10 +1841,35 @@ function openSubModal(s) {            // s = null → new subscription
   setSubMethodSeg(s && ['pix', 'debit', 'credit'].includes(s.method) ? s.method : 'credit');
   $('#sub-active').checked = s ? String(s.status || '').toUpperCase() === 'ACTIVE' : true;
   $('#sub-charged').checked = false;
-  $('#sub-charged-wrap').classList.toggle('hidden', !!s && String(s.last_posted || '').slice(0, 7) === todayISO().slice(0, 7));
+  $('#sub-charged-wrap').classList.toggle('hidden', !!s && !!subChargeThisMonth(s));
+  $('#sub-help').textContent = 'ACTIVE subs post to ' + subsCatOf() + ' · ' + subsSubName() +
+    ' once a month on their billing day — no manual input, never charged twice in the same month.';
+  subDeleteArmed = false;
+  $('#sub-delete').textContent = 'Delete subscription';
+  $('#sub-delete').classList.toggle('hidden', !s);
   $('#sub-modal').classList.remove('hidden');
   if (!s) setTimeout(() => $('#sub-name').focus(), 150);
 }
+
+/* delete with double confirmation (Session 18) — past transactions stay in the ledger */
+let subDeleteArmed = false;
+$('#sub-delete').addEventListener('click', async () => {
+  if (!currentSub) return;
+  if (!subDeleteArmed) {
+    subDeleteArmed = true;
+    $('#sub-delete').textContent = 'Tap again to delete "' + currentSub.name + '"';
+    return;
+  }
+  const name = currentSub.name;
+  $('#sub-modal').classList.add('hidden');
+  if (payload && payload.subscriptions) {
+    payload.subscriptions = payload.subscriptions.filter(s => s !== currentSub);
+    localStorage.setItem(LS.cache, JSON.stringify(payload));
+  }
+  render();
+  if (await apiPost('delete_subscription', { name }, { noQueueOnReject: true })) toast(name + ' deleted ✓');
+  else refresh(false);
+});
 $('#sub-add').addEventListener('click', () => openSubModal(null));
 $('#sub-save').addEventListener('click', async () => {
   const name = $('#sub-name').value.trim();
