@@ -323,7 +323,7 @@
         <button class="btn-small" id="st-refresh">Refresh from Sheet</button>
         <button class="btn-small" id="st-test" style="margin-left:8px;">Test connection</button>
         <div class="mono" id="st-info" style="margin-top:10px;"></div>
-        <div class="mono" style="margin-top:6px;">BuJo OS · Session 16 build (v18)</div>
+        <div class="mono" style="margin-top:6px;">BuJo OS · Session 17 build (v19)</div>
       </div>
     </section>
   </main>
@@ -641,47 +641,71 @@ async function apiGet(url, token) {
 /* POST as text/plain (string body) — avoids the CORS preflight Apps Script can't answer.
    Session 7: API rejections (ok:false) are surfaced with their real error — they are NOT
    "offline". Both cases keep the item in the queue so nothing is lost. */
-async function apiPost(action, data, opts) {
+/* Session 17 — anti-duplication:
+   1) every write gets an op_id ONCE, reused on every retry → the API applies it at most once;
+   2) keepalive lets the request finish even if the phone locks / app goes to background;
+   3) the queue flush is single-flight and removes items by op_id (no overlapping flushes). */
+const newOpId = () => (crypto && crypto.randomUUID) ? crypto.randomUUID()
+  : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+
+function postOp(item) {
   const { url, token } = cfg();
+  return fetch(url, { method:'POST', keepalive: true,
+    body: JSON.stringify({ token, action: item.action, payload: item.payload, op_id: item.op_id }) })
+    .then(res => res.json());
+}
+
+async function apiPost(action, data, opts) {
   const noQ = !!(opts && opts.noQueueOnReject);   // Session 12: edits/deletes that the API
-  try {                                            // rejects would fail forever — don't queue them
-    const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action, payload: data }) });
-    const j = await res.json();
+  const item = { action, payload: data, op_id: newOpId() };   // rejects would fail forever
+  try {
+    const j = await postOp(item);
     if (!j.ok) {
-      if (!noQ) pushQueue({ action, payload: data });
+      if (!noQ) pushQueue(item);
       toast('⚠️ API rejected: ' + (j.error || 'unknown error') + (noQ ? '' : ' — kept in queue'));
       return false;
     }
     return true;
   } catch (e) {
-    pushQueue({ action, payload: data });          // real offline: queueing is always safe
+    /* response lost ≠ write lost: the API may already have applied it. Safe to queue
+       because the retry carries the SAME op_id and will be skipped server-side if done. */
+    pushQueue(item);
     toast('Offline — saved to queue ✓');
     return false;
   }
 }
 
 /* ================= offline queue ================= */
-const getQueue = () => JSON.parse(localStorage.getItem(LS.queue) || '[]');
+function getQueue() {
+  const q = JSON.parse(localStorage.getItem(LS.queue) || '[]');
+  let patched = false;
+  q.forEach(i => { if (!i.op_id) { i.op_id = newOpId(); patched = true; } });   // legacy items
+  if (patched) localStorage.setItem(LS.queue, JSON.stringify(q));
+  return q;
+}
 const setQueue = q => { localStorage.setItem(LS.queue, JSON.stringify(q)); renderQueueBadge(); };
 const pushQueue = item => { const q = getQueue(); q.push(item); setQueue(q); };
 
-async function flushQueue() {
-  let q = getQueue();
+let flushing = null;
+function flushQueue() {
+  if (!flushing) flushing = runFlush().finally(() => { flushing = null; });
+  return flushing;                      // concurrent callers share the same run
+}
+async function runFlush() {
+  const q = getQueue();
   if (!q.length) return;
-  const { url, token } = cfg();
-  const remaining = [];
+  const done = new Set();
   let fatal = '';
   for (const item of q) {
-    if (fatal) { remaining.push(item); continue; }   // auth/config error: stop hammering, keep the rest
+    if (fatal) break;                   // auth/config error: stop hammering, keep the rest
     try {
-      const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action:item.action, payload:item.payload }) });
-      const j = await res.json();
-      if (!j.ok) {
-        remaining.push(item);
-        if (/unauthorized|SECRET/i.test(String(j.error || ''))) fatal = j.error;
-      }
-    } catch (e) { remaining.push(item); }
+      const j = await postOp(item);
+      if (j.ok) done.add(item.op_id);
+      else if (/unauthorized|SECRET/i.test(String(j.error || ''))) fatal = j.error;
+    } catch (e) { /* stays queued, same op_id */ }
   }
+  /* re-read: items queued DURING the flush must survive */
+  const remaining = getQueue().filter(i => !done.has(i.op_id));
   setQueue(remaining);
   if (fatal) toast('⚠️ Queue blocked: ' + fatal);
   else if (q.length && !remaining.length) toast('Queue synced ✓');
@@ -1337,7 +1361,8 @@ function renderFinance() {
     const tc = txCat(t);
     div.querySelector('.n').textContent = t.description || tc.sub || tc.cat;
     div.querySelector('.d').textContent = String(t.date).slice(8,10) + '/' + String(t.date).slice(5,7) +
-      ' · ' + (tc.sub || tc.cat) + (t.source === 'manual' ? ' · manual' : t.source === 'auto' ? ' · auto' : '');
+      ' · ' + (tc.sub || tc.cat) + (t.source === 'manual' ? ' · manual' : t.source === 'auto' ? ' · auto' : '') +
+      (/dup\?/.test(String(t.review_flag || '')) ? ' · ⚠️ possível duplicata' : '');
     const av = div.querySelector('.a');
     av.textContent = (a >= 0 ? '+' : '−') + money(Math.abs(a));
     if (a > 0) av.classList.add('pos');
